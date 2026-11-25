@@ -9,6 +9,9 @@ import uuid
 import requests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from imports import UTC, record
+import renpho_sync
+import hevy
+from renpho import RenphoAPIError
 
 # Collection ID, JSON field, value, unit, date field used for incremental reads.
 GOOGLE_TYPES = [
@@ -169,27 +172,25 @@ def withings_page(access, cursor):
 
 
 def refresh(provider, tokens):
+    prefix, url = {
+        "google-health": ("GOOGLE_HEALTH", "https://oauth2.googleapis.com/token"),
+        "withings": ("WITHINGS", "https://wbsapi.withings.net/v2/oauth2"),
+        "hevy": ("HEVY", "https://hevy.com/api/token"),
+    }[provider]
     if tokens.get("expires_at", 0) > time.time() + 60:
         return tokens
-    google = provider == "google-health"
-    prefix = "GOOGLE_HEALTH" if google else "WITHINGS"
-    url = (
-        "https://oauth2.googleapis.com/token"
-        if google
-        else "https://wbsapi.withings.net/v2/oauth2"
-    )
     params = {
         "grant_type": "refresh_token",
         "client_id": os.environ[prefix + "_CLIENT_ID"],
         "client_secret": os.environ[prefix + "_CLIENT_SECRET"],
         "refresh_token": tokens["refresh_token"],
     }
-    if not google:
+    if provider == "withings":
         params["action"] = "requesttoken"
     r = requests.post(url, data=params, timeout=15, allow_redirects=False)
     r.raise_for_status()
     reply = r.json()
-    if not google:
+    if provider == "withings":
         reply = reply["body"]
     if not reply.get("access_token"):
         raise ValueError("Provider requires reconnection")
@@ -217,22 +218,43 @@ def process(cur, save):
         aad = uuid.UUID(str(owner)).bytes
         ciphertext = bytes(encrypted)
         tokens = json.loads(aes.decrypt(ciphertext[:12], ciphertext[12:], aad))
-        refreshed = refresh(provider, tokens)
-        if refreshed != tokens:
+
+        def replace_credential(data):
             nonce = os.urandom(12)
-            new_token = nonce + aes.encrypt(nonce, json.dumps(refreshed).encode(), aad)
+            new_token = nonce + aes.encrypt(nonce, json.dumps(data).encode(), aad)
             cur.execute(
                 "UPDATE health_cloud_sources SET credential=%s WHERE user_id=%s AND provider=%s",
                 (new_token, owner, provider),
             )
-        # Preserve rotated credentials if the subsequent data request fails.
+
+        if provider == "renpho" and "password" in tokens:
+            replace_credential(renpho_sync.exchange(tokens))
+            cur.execute(
+                "UPDATE health_cloud_sources SET next_sync=now(), status='Importing history' WHERE user_id=%s AND provider=%s",
+                (owner, provider),
+            )
+            return True
+        if provider != "renpho":
+            refreshed = refresh(provider, tokens)
+            if refreshed != tokens:
+                replace_credential(refreshed)
+            tokens = refreshed
         cur.execute("SAVEPOINT cloud_page")
         try:
-            fetch = google_page if provider == "google-health" else withings_page
-            rows, cursor, done = fetch(
-                refreshed["access_token"], json.loads(cursor_json)
-            )
-            save(cur, owner, rows)
+            cursor = json.loads(cursor_json)
+            if provider == "hevy":
+                cursor, done = hevy.page(
+                    cur, save, owner, tokens["access_token"], cursor
+                )
+            else:
+                if provider == "renpho":
+                    rows, cursor, done = renpho_sync.page(tokens, cursor)
+                else:
+                    fetch = {"google-health": google_page, "withings": withings_page}[
+                        provider
+                    ]
+                    rows, cursor, done = fetch(tokens["access_token"], cursor)
+                save(cur, owner, rows)
             cursor_json = json.dumps(cursor)
             delay = 21600 if done else 2
             status = (
@@ -243,7 +265,14 @@ def process(cur, save):
         except Exception:
             cur.execute("ROLLBACK TO SAVEPOINT cloud_page")
             raise
-    except (requests.RequestException, ValueError, KeyError):
+    except renpho_sync.ReconnectRequired:
+        replace_credential({})
+        cur.execute(
+            "UPDATE health_cloud_sources SET next_sync='infinity', status='Reconnect RENPHO to resume importing.' WHERE user_id=%s AND provider=%s",
+            (owner, provider),
+        )
+        return True
+    except (requests.RequestException, RenphoAPIError, ValueError, TypeError, KeyError):
         pass
     cur.execute(
         "UPDATE health_cloud_sources SET status=%s,cursor_json=%s,next_sync=now()+%s*interval '1 second' WHERE user_id=%s AND provider=%s",

@@ -114,6 +114,19 @@ pub async fn dashboard(state: &SharedState, user: &app_auth::User, filter: Filte
                 h3 {"Intervals.icu"} p {"Connect your personal API key to import daily wellness and training activities. Recent records refresh every six hours."}
                 @if let Some(status)=connection { p {(status)} form method="post" action="/health/disconnect" {button {"Disconnect"}} }
                 @else {form method="post" action="/health/connect" {label {"Intervals.icu API key" input type="password" required name="token" maxlength="256" autocomplete="off";} button {"Connect"} }}
+                h3 {"RENPHO scale and smart tape"}
+                p {"Import your profile’s readings now and every six hours. Connecting through the unofficial RENPHO client signs you out of the RENPHO app. Signing back into the app can pause sync here. If your Bluetooth scale needs the phone app to upload weigh-ins, consider the Apple Health exporter below."}
+                @if let Some(cloud)=clouds.iter().find(|x|x.provider=="renpho") {
+                    p {(cloud.status)} form method="post" action="/health/cloud/renpho/disconnect" {button {"Disconnect RENPHO"}}
+                }
+                @if clouds.iter().all(|x|x.provider!="renpho" || x.status.starts_with("Reconnect")) {
+                    form method="post" action="/health/renpho/connect" {
+                        label {"RENPHO email" input type="email" required name="email" maxlength="320" autocomplete="off";}
+                        label {"RENPHO password" input type="password" required name="password" maxlength="1024" autocomplete="off";}
+                        p {"The worker uses your password once and keeps an encrypted session for scheduled reads."}
+                        button {"Connect RENPHO"}
+                    }
+                }
                 @for provider in crate::health_oauth::PROVIDERS {
                     h3 {(provider.title)}
                     @if let Some(cloud)=clouds.iter().find(|x|x.provider==provider.id) {

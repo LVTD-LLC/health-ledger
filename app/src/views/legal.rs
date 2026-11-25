@@ -122,7 +122,7 @@ pub fn privacy() -> Markup {
         },
         html! {
             h2 { "Your health journal" }
-            p { "We store the measurements, source credentials, notes, documents and extracted text you choose to add. Account deletion removes these records from the live database. Uploaded documents are processed on the server. A connected AI client can read your records and document text until you revoke its access. When you use dictation your browser may send audio to its speech service." }
+            p { "We store the measurements, source credentials, notes, documents and extracted text you choose to add. Account deletion removes these records from the live database. Connecting RENPHO sends your sign-in details to RENPHO. The worker replaces the password with an encrypted session after sign-in. Connecting Hevy authorizes read access to your workouts. Uploaded documents are processed on the server. A connected AI client can read your records and document text until you revoke its access. When you use dictation your browser may send audio to its speech service." }
             h2 { "What we collect" }
             ul {
                 @if cfg!(feature = "auth") {

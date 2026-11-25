@@ -25,11 +25,15 @@ RUN cargo build --locked --release -p health-ledger
 
 FROM debian:bookworm-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl python3-psycopg2 python3-requests python3-cryptography python3-defusedxml poppler-utils tesseract-ocr-eng tesseract-ocr \
+    && apt-get install -y --no-install-recommends ca-certificates curl python3-venv python3-psycopg2 python3-requests python3-cryptography python3-defusedxml poppler-utils tesseract-ocr-eng tesseract-ocr \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --create-home app
 WORKDIR /app
 COPY --from=builder /app/target/release/health-ledger /usr/local/bin/health-ledger
+COPY app/worker/requirements.txt /tmp/health-worker-requirements.txt
+RUN python3 -m venv --system-site-packages /opt/health-worker \
+    && /opt/health-worker/bin/pip install --no-cache-dir -r /tmp/health-worker-requirements.txt
+ENV PATH="/opt/health-worker/bin:${PATH}"
 COPY app/worker /app/worker
 # Uploads without a bucket land here; mount a volume or set STORAGE_S3_* in production.
 RUN mkdir -p /app/storage && chown app:app /app/storage

@@ -86,6 +86,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/health/medicines/{id}/end", post(crate::regimens::end))
         .route("/health/medicines/{id}/delete", post(crate::regimens::delete))
         .route("/health/records/{id}/delete", post(crate::health::delete_record))
+        .route("/health/renpho/connect", post(crate::health_oauth::connect_renpho))
         .route("/health/cloud/{provider}/connect", post(crate::health_oauth::start))
         .route("/health/cloud/{provider}/callback", get(crate::health_oauth::callback))
         .route("/health/cloud/{provider}/disconnect", post(crate::health_oauth::disconnect))
@@ -540,6 +541,7 @@ async fn auth_origin(
                 "/sign-up"
                     | "/verify-email"
                     | "/verify-email/resend"
+                    | "/health/renpho/connect"
                     | "/passkeys/register/options"
                     | "/passkeys/register"
                     | "/passkeys/sign-in/options"

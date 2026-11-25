@@ -14,7 +14,9 @@ Start Postgres with `docker compose up -d db`. Copy `.env.example` to `.env`, se
 | Apple Health | Export All Health Data from your profile. Upload the ZIP or export.xml. Records retain HealthKit source names and original units. |
 | Fitbit | Upload individual activity, heart rate, weight or sleep JSON arrays from an export. |
 | Strava | Upload activities.csv from your account archive. |
-| RENPHO, PICOOC, Samsung Health, Google Health, OPPO OHealth, Eight Sleep, FatSecret and other sources | Import compatible dated CSV measurements or records already present in an Apple Health export. A vendor name alone does not establish a direct cloud connection. |
+| RENPHO | Connect your RENPHO email and password under Sources. Scale and smart tape history from your signed-in profile refreshes every six hours. See the single-session behavior below. |
+| Hevy | Connect through Hevy OAuth to import workout history, exercises and sets. Edits and deletions refresh every six hours. Workout CSV uploads also work. |
+| PICOOC, Samsung Health, Google Health, OPPO OHealth, Eight Sleep, FatSecret and other sources | Import compatible dated CSV measurements or records already present in an Apple Health export. A vendor name alone does not establish a direct cloud connection. |
 | Other devices or custom exports | Use a UTF-8 CSV with timestamp,metric,value,unit,kind,note columns, or a wide CSV with one numeric column per measurement. Include units in the column headings, e.g. Weight (kg). |
 
 Timestamps with offsets preserve the instant. Dates and times without an offset are interpreted as UTC. Repeat imports using the same source label to deduplicate. A 32 MiB upload limit applies; Apple ZIPs may expand to 256 MiB. Deleting an import file preserves the imported records. Delete records in the timeline or delete the account to remove everything.
@@ -42,6 +44,16 @@ In Sources, create a write-only exporter key. For Apple Health, set up [Health A
 ```json
 {"records":[{"id":"scale-123","source":"Home scale","timestamp":"2026-01-02T08:30:00+01:00","kind":"Measurement","metric":"Weight","value":70.5,"unit":"kg"}]}
 ```
+
+### RENPHO scale and tape
+
+The direct connection uses the [unofficial RENPHO client](https://github.com/danvaneijck/renpho-api). A RENPHO login signs out the phone app. This matters for Bluetooth devices that use the phone app to upload new readings. If you need the app for each weigh-in, the scheduled Apple Health exporter may fit your workflow better.
+
+The worker exchanges the encrypted password for a session and uses that session to read your profile’s available weight, body composition, heart rate and tape measurements. It checks the full history every six hours and updates matching readings. A failed sign-in or expired session discards the stored credential and prompts you to reconnect. Disconnect stops scheduled reads and preserves the timeline.
+
+### Hevy workouts
+
+Register a [Hevy OAuth app](https://developers.hevy.com/authentication) with the `read-workout` permission and callback `https://YOUR-HOST/health/cloud/hevy/callback`. Set `HEVY_CLIENT_ID` and `HEVY_CLIENT_SECRET` for the web app and worker. Users then choose **Connect Hevy** in Sources. The first import reads historical workouts page by page. Scheduled imports read updates and deletions. Workout duration, exercise sets, reps, weight, distance, duration and perceived exertion appear in the timeline when available.
 
 ### Google Health / Fitbit and Withings cloud sync
 

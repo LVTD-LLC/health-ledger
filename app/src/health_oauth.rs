@@ -19,6 +19,14 @@ pub struct Provider {
 }
 pub const PROVIDERS: &[Provider] = &[
     Provider {
+        id: "hevy",
+        title: "Hevy",
+        prefix: "HEVY",
+        authorize: "https://hevy.com/oauth/authorize",
+        token: "https://hevy.com/api/token",
+        scope: "",
+    },
+    Provider {
         id: "google-health",
         title: "Google Health / Fitbit",
         prefix: "GOOGLE_HEALTH",
@@ -79,10 +87,11 @@ pub async fn start(
     let mut url = reqwest::Url::parse(p.authorize)?;
     url.query_pairs_mut()
         .append_pair("client_id", &client)
-        .append_pair("scope", p.scope)
-        .append_pair("response_type", "code")
         .append_pair("state", &state)
         .append_pair("redirect_uri", &redirect_url(&s, &id));
+    if !p.scope.is_empty() {
+        url.query_pairs_mut().append_pair("scope", p.scope).append_pair("response_type", "code");
+    }
     if id == "google-health" {
         url.query_pairs_mut().append_pair("access_type", "offline").append_pair("prompt", "consent");
     }
@@ -121,8 +130,10 @@ pub async fn callback(
         ("grant_type", "authorization_code"),
         ("client_id", &client),
         ("client_secret", &secret),
-        ("redirect_uri", &uri),
     ];
+    if id != "hevy" {
+        fields.push(("redirect_uri", &uri));
+    }
     if id == "withings" {
         fields.push(("action", "requesttoken"));
     }
@@ -142,8 +153,34 @@ pub async fn callback(
     if data["refresh_token"].as_str().is_none() || data["access_token"].as_str().is_none() {
         return Err(denied());
     }
-    let encrypted = crate::health::seal(u.id, &serde_json::to_vec(data)?)?;
-    sqlx::query!("INSERT INTO health_cloud_sources(user_id,provider,credential) VALUES($1,$2,$3) ON CONFLICT(user_id,provider) DO UPDATE SET credential=EXCLUDED.credential,cursor_json='{}',next_sync=now(),status='Queued'",u.id,id,encrypted).execute(&s.pool).await?;
+    let mut tokens = data.clone();
+    if let Some(seconds) = data["expires_in"].as_i64() {
+        tokens["expires_at"] =
+            serde_json::json!(time::OffsetDateTime::now_utc().unix_timestamp().saturating_add(seconds));
+    }
+    save_connection(&s, u.id, &id, &tokens).await
+}
+
+#[derive(Deserialize)]
+pub struct RenphoLogin {
+    email: String,
+    password: String,
+}
+pub async fn connect_renpho(
+    State(s): State<SharedState>,
+    CurrentUser(u): CurrentUser,
+    axum::Form(input): axum::Form<RenphoLogin>,
+) -> Result<Redirect, AppError> {
+    let email = input.email.trim();
+    if !email.contains('@') || email.len() > 320 || input.password.is_empty() || input.password.len() > 1024 {
+        return Err(AppError::Status(StatusCode::UNPROCESSABLE_ENTITY, "Enter your RENPHO email and password.".into()));
+    }
+    save_connection(&s, u.id, "renpho", &serde_json::json!({"email":email, "password":input.password})).await
+}
+
+async fn save_connection(s: &SharedState, owner: uuid::Uuid, id: &str, data: &Value) -> Result<Redirect, AppError> {
+    let encrypted = crate::health::seal(owner, &serde_json::to_vec(data)?)?;
+    sqlx::query!("INSERT INTO health_cloud_sources(user_id,provider,credential) VALUES($1,$2,$3) ON CONFLICT(user_id,provider) DO UPDATE SET credential=EXCLUDED.credential,cursor_json='{}',next_sync=now(),status='Queued'",owner,id,encrypted).execute(&s.pool).await?;
     Ok(Redirect::to("/dashboard#sources"))
 }
 pub async fn disconnect(

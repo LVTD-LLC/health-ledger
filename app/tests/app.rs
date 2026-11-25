@@ -2873,3 +2873,21 @@ async fn medication_courses_can_be_queried_for_a_day(pool: PgPool) {
         );
     }
 }
+
+#[cfg(feature = "auth")]
+#[sqlx::test(migrations = "../migrations")]
+async fn renpho_connection_requires_owner_and_origin(pool: PgPool) {
+    let (_, cookie) = settings_user(&pool, "scale-owner@example.test").await;
+    let router = app(pool);
+    let path = "/health/renpho/connect";
+    let body = "email=scale%40example.test&password=";
+    let (_, _, dashboard) = send(&router, get("/dashboard", Some(&cookie))).await;
+    assert!(dashboard.contains(path));
+    assert!(dashboard.contains("signs you out"));
+    assert!(dashboard.contains("Hevy"));
+    let mut cross_origin = form(path, body, Some(&cookie));
+    cross_origin.headers_mut().insert(header::ORIGIN, "https://other.example".parse().unwrap());
+    assert_eq!(send(&router, cross_origin).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(send(&router, form(path, body, Some(&cookie))).await.0, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_ne!(send(&router, form(path, body, None)).await.0, StatusCode::UNPROCESSABLE_ENTITY);
+}
