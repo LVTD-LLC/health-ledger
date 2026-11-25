@@ -1,8 +1,6 @@
 """Translate personal exports into timestamped records with source identifiers."""
 
 import csv
-import datetime as dt
-import hashlib
 import io
 import json
 import re
@@ -10,55 +8,11 @@ import zipfile
 from pathlib import PurePosixPath
 
 from defusedxml import ElementTree as xml
+import android_health
 
-UTC = dt.timezone.utc
+from records import UTC, record, timestamp
+
 MAX_EXPANDED = 256 * 1024 * 1024
-
-
-def timestamp(raw):
-    value = str(raw).strip()
-    if re.fullmatch(r"\d{13}", value):
-        return dt.datetime.fromtimestamp(int(value) / 1000, UTC)
-    try:
-        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        for pattern in (
-            "%Y-%m-%d %H:%M:%S %z",
-            "%b %d, %Y, %I:%M:%S %p",
-            "%m/%d/%y %H:%M:%S",
-            "%d %b %Y, %H:%M",
-            "%d %b %Y, %H:%M:%S",
-            "%Y/%m/%d %H:%M:%S",
-            "%Y/%m/%d",
-            "%m/%d/%Y %H:%M:%S",
-            "%m/%d/%Y %I:%M:%S %p",
-            "%m/%d/%Y",
-        ):
-            try:
-                parsed = dt.datetime.strptime(value, pattern)
-                break
-            except ValueError:
-                continue
-        else:
-            raise ValueError("Unrecognized timestamp")
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-
-
-def record(when, kind, name, value="", unit="", note="", source="", identity=None):
-    when = timestamp(when).astimezone(UTC)
-    fields = (
-        when,
-        kind,
-        str(name)[:160],
-        str(value)[:160],
-        str(unit)[:64],
-        str(note)[:4000],
-        str(source)[:160],
-    )
-    digest = hashlib.sha256(
-        json.dumps(identity or fields, default=str, ensure_ascii=False).encode()
-    ).hexdigest()
-    return (*fields, digest)
 
 
 def apple(stream, source):
@@ -315,6 +269,15 @@ def mobile_export(data, source):
 
 def json_records(stream, source, filename):
     data = json.load(stream)
+    if (
+        isinstance(data, dict)
+        and isinstance(data.get("app_version"), str)
+        and isinstance(data.get("timestamp"), str)
+        and "records" not in data
+        and "data" not in data
+    ):
+        yield from android_health.rows(data)
+        return
     if isinstance(data, dict) and data.get("resourceType") in ("Bundle", "Observation"):
         resources = (
             [v.get("resource", {}) for v in data.get("entry", [])]

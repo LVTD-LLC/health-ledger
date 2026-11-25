@@ -2891,3 +2891,28 @@ async fn renpho_connection_requires_owner_and_origin(pool: PgPool) {
     assert_eq!(send(&router, form(path, body, Some(&cookie))).await.0, StatusCode::UNPROCESSABLE_ENTITY);
     assert_ne!(send(&router, form(path, body, None)).await.0, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[cfg(feature = "auth")]
+#[sqlx::test(migrations = "../migrations")]
+async fn android_exporter_can_test_then_queue_health_data(pool: PgPool) {
+    let (_, cookie) = settings_user(&pool, "android-export@example.test").await;
+    let router = app(pool);
+    let (_, _, settings) = send(&router, form("/health/exporter", "", Some(&cookie))).await;
+    let start = settings.find("hli_").unwrap();
+    let key = &settings[start..start + 68];
+    let post = |key: &str, raw: &'static str| {
+        Request::post("/ingest/v1/health")
+            .header(header::AUTHORIZATION, format!("Bearer {key}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(raw))
+            .unwrap()
+    };
+    let probe = r#"{"app_version":"3.0","timestamp":"2026-01-01T09:00Z","test":true,"steps":[{"count":999}]}"#;
+    assert_eq!(send(&router, post("invalid", probe)).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(send(&router, post(key, probe)).await.0, StatusCode::OK);
+    let live = r#"{"app_version":"3.0","timestamp":"2026-01-01T09:00Z","weight":[{"time":"2026-01-01T08:00Z","kilograms":70}]}"#;
+    assert_eq!(send(&router, post(key, live)).await.0, StatusCode::ACCEPTED);
+    assert_eq!(send(&router, post(key, live)).await.0, StatusCode::ACCEPTED);
+    let (_, _, dashboard) = send(&router, get("/dashboard", Some(&cookie))).await;
+    assert_eq!(dashboard.matches("device-export.json").count(), 1);
+}

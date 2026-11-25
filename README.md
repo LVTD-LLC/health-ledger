@@ -11,6 +11,7 @@ Start Postgres with `docker compose up -d db`. Copy `.env.example` to `.env`, se
 | Source | How to bring in data |
 | --- | --- |
 | Intervals.icu | Connect your personal API key under Sources. Backfill runs in 180-day windows back to 1970. Completed connections refresh the latest seven days every six hours. Disconnect removes the encrypted credential. |
+| Android Health Connect | Schedule JSON delivery from Health Connect Webhook. This includes selected records that Samsung Health and other compatible apps have written to the phone. |
 | Apple Health | Export All Health Data from your profile. Upload the ZIP or export.xml. Records retain HealthKit source names and original units. |
 | Fitbit | Upload individual activity, heart rate, weight or sleep JSON arrays from an export. |
 | Strava | Upload activities.csv from your account archive. |
@@ -44,6 +45,8 @@ In Sources, create a write-only exporter key. For Apple Health, set up [Health A
 ```json
 {"records":[{"id":"scale-123","source":"Home scale","timestamp":"2026-01-02T08:30:00+01:00","kind":"Measurement","metric":"Weight","value":70.5,"unit":"kg"}]}
 ```
+
+On Android, enable Health Connect sharing in the source app and authorize [Health Connect Webhook](https://github.com/mcnaveen/health-connect-webhook) to read the desired record types. Add an HTTP webhook, choose JSON, enter the exporter endpoint and set the custom header `Authorization` to `Bearer YOUR_EXPORTER_KEY`. Test verifies the connection without adding sample readings. Run a custom historical range, then enable scheduled sync. History depends on the Android permissions granted and records available on the device. The importer keeps source app identifiers, sleep stages, exercise sessions, vitals, nutrition, body measurements and other supported readings. Phone exports are historical copies. Delete unwanted entries in Health Ledger.
 
 ### RENPHO scale and tape
 

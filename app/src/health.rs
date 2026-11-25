@@ -135,7 +135,8 @@ pub async fn dashboard(state: &SharedState, user: &app_auth::User, filter: Filte
                         form method="post" action={ "/health/cloud/" (provider.id) "/connect" } {button {"Connect " (provider.title)}}
                     } @else {p {"Direct sync requires operator setup. You can import an export below."}}
                 }
-                h3 {"Apple Health and device exporters"}
+                h3 {"Phone exporters"}
+                p {"On Android, enable Health Connect sharing in your source apps. In " a href="https://github.com/mcnaveen/health-connect-webhook" {"Health Connect Webhook"} ", add an HTTP webhook with the URL and Authorization header below, choose JSON and the metrics to share, sync a historical range, then enable scheduled sync."}
                 p {"In Health Auto Export on iOS, create a REST API automation, select JSON, then paste the endpoint and Authorization header shown with your key. Choose a historical range for the first export and enable the schedule for new data."}
                 form method="post" action="/health/exporter" {button { @if has_key {"Replace exporter key"} @else {"Create exporter key"} }}
                 @if has_key {form method="post" action="/health/exporter/revoke" {button {"Revoke exporter key"}}}
@@ -400,10 +401,15 @@ pub async fn ingest(
         .await
         .map_err(|_| invalid("Split batches at 8 MiB."))?;
     let data: Value = serde_json::from_slice(&raw).map_err(|_| invalid("Invalid JSON."))?;
-    if !["metrics", "workouts", "medications", "stateOfMind", "symptoms"].iter().any(|k| data["data"][k].is_array())
+    let android = data["app_version"].is_string() && data["timestamp"].is_string();
+    if android && data["test"] == true {
+        return Ok(axum::Json(json!({"status":"connected"})).into_response());
+    }
+    if !android
+        && !["metrics", "workouts", "medications", "stateOfMind", "symptoms"].iter().any(|k| data["data"][k].is_array())
         && !data["records"].is_array()
     {
-        return Err(invalid("Supply Health Auto Export data or a records array."));
+        return Err(invalid("Supply Health Auto Export JSON, Health Connect Webhook JSON or a records array."));
     }
     let batch = Sha256::digest(&raw).to_vec();
     sqlx::query!("INSERT INTO health_files(user_id,name,purpose,source,content,batch_hash) VALUES($1,'device-export.json','import','Device export',$2,$3) ON CONFLICT(user_id,batch_hash) DO NOTHING",owner,raw.as_ref(),batch).execute(&s.pool).await?;
