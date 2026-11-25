@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT hour_utc FROM health_reminders WHERE user_id=$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "hour_utc",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "health_reminders",
+            "name": "hour_utc"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f77e68a9bd2059f96c1cda3a7537041435a17835c12755848e400018957f571b"
+}

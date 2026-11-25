@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO health_connections(user_id,credential) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET credential=EXCLUDED.credential,next_sync=now(),backfill_before=NULL,status='Queued'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1490ef8b2b829900b1818fc4d98aceb273da82c7f307203a1a161cb6329e1495"
+}

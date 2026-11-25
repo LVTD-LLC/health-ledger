@@ -1,0 +1,54 @@
+name: Checks
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  test:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: health-ledger
+          POSTGRES_DB: health-ledger
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:health-ledger@localhost:5432/health-ledger
+      SQLX_OFFLINE: "true"
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: selected-features-v1
+      # Compile the checked-in SQL metadata and test the actual selected defaults.
+      # SQLx tests apply migrations to their disposable databases themselves.
+      - run: bash scripts/check-fast.sh
+      - run: cargo test --locked --workspace
+      - name: Check export parsers and document extraction
+        run: |
+          python3 -m venv /tmp/ledger-tests
+          /tmp/ledger-tests/bin/pip install defusedxml==0.7.1
+          /tmp/ledger-tests/bin/python -m unittest discover -s app/worker

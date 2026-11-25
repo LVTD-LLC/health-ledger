@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO health_records(user_id,occurred_at,kind,title,value,unit,note,source) VALUES($1,$2,$3,$4,$5,$6,$7,'Manual')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9d99c5dd2d5669ef70696273547b21c4e4294660b1364f5c4f3e95ead557c820"
+}

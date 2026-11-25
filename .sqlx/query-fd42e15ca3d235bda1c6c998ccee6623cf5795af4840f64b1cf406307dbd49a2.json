@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO health_reminders(user_id,hour_utc,next_send) VALUES($1,$2,date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' + $2::smallint * interval '1 hour' + CASE WHEN extract(hour FROM now() AT TIME ZONE 'UTC') >= $2 THEN interval '1 day' ELSE interval '0 days' END) ON CONFLICT(user_id) DO UPDATE SET hour_utc=EXCLUDED.hour_utc,next_send=EXCLUDED.next_send",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int2"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fd42e15ca3d235bda1c6c998ccee6623cf5795af4840f64b1cf406307dbd49a2"
+}

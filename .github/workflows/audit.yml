@@ -1,0 +1,194 @@
+name: Audit
+on:
+  workflow_dispatch:
+    inputs:
+      full_mutation:
+        description: Audit all Rust code instead of the last commit (can take hours)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    timeout-minutes: 180
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: health-ledger
+          POSTGRES_DB: health-ledger
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:health-ledger@localhost:5432/health-ledger
+      CARGO_TERM_COLOR: always
+      # The capability matrix otherwise accumulates multi-GB debug/incremental artifacts.
+      # Production release profiles and the complete test matrix stay unchanged.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: lean-ci-v1
+      - run: cargo install sqlx-cli --version 0.9.0 --no-default-features --features postgres,rustls --locked
+      - run: cargo sqlx migrate run
+      - run: cargo fmt --all --check
+      - run: SQLX_OFFLINE=true cargo clippy --workspace --all-targets -- -D warnings
+      # Fails if .sqlx is stale: regenerate with `cargo sqlx prepare --workspace`.
+      - run: cargo sqlx prepare --workspace --check -- --all-features --all-targets
+      - run: cargo test --workspace
+      - run: SQLX_OFFLINE=true cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+      - run: cargo test --workspace --no-default-features
+      - run: SQLX_OFFLINE=true cargo clippy --workspace --all-targets --no-default-features --features blog -- -D warnings
+      - run: cargo test --workspace --no-default-features --features blog
+      - run: SQLX_OFFLINE=true cargo clippy --workspace --all-targets --no-default-features --features docs -- -D warnings
+      - run: cargo test --workspace --no-default-features --features docs
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: node --test app/tests/*.test.cjs
+      - run: SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-features
+      - name: Check independent optional capabilities
+        run: |
+          for feature in auth google github api mcp stripe storage qdrant sentry-errors sentry-traces sentry-logs sentry-metrics sentry-replay posthog-web posthog-product posthog-logs posthog-traces; do
+            SQLX_OFFLINE=true cargo clippy --workspace --all-targets --no-default-features --features "$feature" -- -D warnings
+            cargo test --workspace --no-default-features --features "$feature"
+          done
+      - run: cargo build --release --locked -p health-ledger
+
+  mutation:
+    timeout-minutes: 180
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: health-ledger
+          POSTGRES_DB: health-ledger
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:health-ledger@localhost:5432/health-ledger
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: mutation-v1
+          cache-targets: false
+      - run: python3 scripts/ci/test-mutation-test.py
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@27.1.0
+      - name: Mutation test Rust code
+        env:
+          FULL_MUTATION: ${{ inputs.full_mutation }}
+        run: |
+          if [ "$FULL_MUTATION" = true ]; then
+            bash scripts/ci/mutation-test.sh
+          else
+            base=$(git rev-parse --verify HEAD^ 2>/dev/null || git rev-parse HEAD)
+            bash scripts/ci/mutation-test.sh "$base"
+          fi
+      - name: Save mutation report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-project
+          path: mutants.out
+          include-hidden-files: true
+          retention-days: 14
+
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      SQLX_OFFLINE: "true"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt, rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "fuzz -> target"
+          key: fuzz
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
+      - run: cargo deny --manifest-path fuzz/Cargo.toml --config deny.toml check
+      - run: bash scripts/fuzz.sh 30
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: fuzz-${{ github.run_id }}
+          path: |
+            fuzz/artifacts/
+            fuzz/corpus/
+          if-no-files-found: ignore
+
+  # Runs for every generated project, with its selected Cargo defaults.
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: health-ledger
+          POSTGRES_DB: health-ledger
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:health-ledger@localhost:5432/health-ledger
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-01
+          components: llvm-tools-preview, rustfmt
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      - run: python3 -m unittest discover -s scripts -p 'test_coverage_*.py'
+      - run: bash scripts/coverage.sh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/branch-coverage
+      - uses: actions/upload-artifact@v7
+        with:
+          name: branch-coverage
+          path: target/coverage/
+          if-no-files-found: error
+          retention-days: 14
