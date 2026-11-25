@@ -107,9 +107,12 @@ def csv_records(stream, source):
     rows = csv.reader(stream, dialect)
     headers = next(rows, [])
     # Samsung exports often start with a metadata line before their header.
-    if headers and headers[0].startswith("com.samsung."):
+    if headers and headers[0].startswith("com.samsung.") and len(headers) < 5:
         headers = next(rows, [])
-    headers = [h.strip() for h in headers]
+    headers = [
+        h.rsplit(".", 1)[-1].strip() if h.startswith("com.samsung.") else h.strip()
+        for h in headers
+    ]
 
     def normalized(h):
         return re.sub(r"[^a-z0-9]+", " ", h.lower()).strip()
@@ -124,6 +127,8 @@ def csv_records(stream, source):
         "activity date",
         "time of measurement",
         "measurement time",
+        "day time",
+        "measurement date",
         "time",
         "date",
     ):
@@ -139,6 +144,13 @@ def csv_records(stream, source):
             continue
         row = dict(zip(keys, cells))
         when = cells[index]
+        offset = row.get("time offset", "").removeprefix("UTC")
+        if (
+            re.fullmatch(r"[+-]\d{4}", offset)
+            and not re.search(r"(Z|[+-]\d{2}:?\d{2})$", when)
+            and ":" in when
+        ):
+            when += offset
         if (
             "date" in row
             and "time" in row
@@ -419,18 +431,54 @@ def parse_file(filename, payload, source):
     ext = PurePosixPath(filename).suffix.lower()
     if ext == ".zip":
         with zipfile.ZipFile(stream) as archive:
-            hits = [
-                f
-                for f in archive.infolist()
-                if PurePosixPath(f.filename).name == "export.xml"
-                and not f.filename.startswith("__MACOSX/")
-            ]
-            if len(hits) != 1 or hits[0].file_size > MAX_EXPANDED:
+            members = []
+            for entry in archive.infolist():
+                name = PurePosixPath(entry.filename).name.lower()
+                if entry.is_dir() or entry.filename.startswith("__MACOSX/"):
+                    continue
+                if name == "export.xml":
+                    members.append((entry, "apple"))
+                elif name == "activities.csv":
+                    members.append((entry, "strava"))
+                elif (
+                    name.startswith("com.samsung.")
+                    and name.endswith(".csv")
+                    and any(
+                        term in name
+                        for term in (
+                            ".weight.",
+                            ".heart_rate.",
+                            ".step_count.",
+                            ".pedometer_day_summary.",
+                            ".blood_pressure.",
+                            ".oxygen_saturation.",
+                            ".sleep_stage.",
+                            ".exercise.",
+                        )
+                    )
+                ):
+                    members.append((entry, "samsung"))
+                elif name.endswith(".json") and re.match(
+                    r"(heart_rate|steps|sleep|weight|distance|calories|altitude|resting_heart_rate)[-_ ]\d{4}",
+                    name,
+                ):
+                    members.append((entry, "fitbit"))
+            if (
+                not members
+                or len(members) > 5000
+                or sum(f.file_size for f, _ in members) > MAX_EXPANDED
+            ):
                 raise ValueError(
-                    "Use an Apple Health ZIP with one export.xml up to 256 MiB expanded."
+                    "No supported export members, or archive exceeds processing limits."
                 )
-            with archive.open(hits[0]) as member:
-                yield from apple(member, source)
+            for entry, kind in members:
+                with archive.open(entry) as member:
+                    if kind == "apple":
+                        yield from apple(member, source)
+                    elif kind == "fitbit":
+                        yield from json_records(member, source, entry.filename)
+                    else:
+                        yield from csv_records(member, source)
     elif ext == ".xml":
         yield from apple(stream, source)
     elif ext == ".csv" or ext == ".tsv":

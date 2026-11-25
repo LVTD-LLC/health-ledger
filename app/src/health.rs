@@ -131,7 +131,7 @@ pub async fn dashboard(state: &SharedState, user: &app_auth::User, filter: Filte
                 details {summary {"Source and format guide"} dl class="source-guide" {
                     dt {"RENPHO"} dd {"Export dated scale readings as CSV, or enable RENPHO in Apple Health and use the device exporter."}
                     dt {"PICOOC, OPPO OHealth and Eight Sleep"} dd {"Bring across measurements already in your Apple Health export or convert a personal export to the CSV format below."}
-                    dt {"Samsung Health"} dd {"Use a dated measurement CSV from Download personal data. Numeric fields become records. Check units against the original app."}
+                    dt {"Samsung Health"} dd {"Upload the ZIP or a dated measurement CSV from Download personal data. Numeric fields become records. Check units against the original app."}
                     dt {"Strava, Strong and Hevy"} dd {"Choose activities.csv from a Strava archive or an exercise-and-reps CSV from your workout app."}
                     dt {"FatSecret and other nutrition apps"} dd {"Use a dated CSV of calories or nutrients, or upload a diary report under Documents."}
                     dt {"Labs"} dd {"FHIR Observation JSON imports values, units and reference ranges. Use Documents for PDF or scanned reports."}

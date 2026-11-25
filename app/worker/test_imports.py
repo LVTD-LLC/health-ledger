@@ -80,3 +80,13 @@ class TrainingAndLabTests(unittest.TestCase):
         (row,) = parse_file("lab.json", data, "Clinic")
         self.assertEqual(row[1:5], ("Lab", "Sample", "3", "g/L"))
         self.assertIn("Reference range", row[5])
+
+
+class VendorArchiveTests(unittest.TestCase):
+    def test_samsung_zip_metadata_and_offset(self):
+        out = io.BytesIO()
+        data = b"com.samsung.health.weight,1,1\ncom.samsung.health.weight.start_time,com.samsung.health.weight.time_offset,com.samsung.health.weight.weight\n2026-01-01 12:00:00,UTC+0200,72.2\n"
+        with zipfile.ZipFile(out, "w") as archive:
+            archive.writestr("data/com.samsung.health.weight.20260101.csv", data)
+        (row,) = parse_file("samsung.zip", out.getvalue(), "Samsung Health")
+        self.assertEqual((row[0].hour, row[2], row[3]), (10, "weight", "72.2"))
