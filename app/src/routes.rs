@@ -81,6 +81,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/passkeys/sign-in/options", post(crate::passkeys::sign_in_options))
         .route("/passkeys/sign-in", post(crate::passkeys::sign_in))
         .route("/dashboard", get(dashboard))
+        .route("/sources", get(sources))
         .route("/health/records", post(crate::health::add))
         .route("/health/medicines", post(crate::regimens::add))
         .route("/health/medicines/{id}/end", post(crate::regimens::end))
@@ -251,6 +252,14 @@ async fn dashboard(
     #[cfg(not(feature = "api"))]
     let _ = headers;
     crate::health::dashboard(&state, &user, filter).await
+}
+
+#[cfg(feature = "auth")]
+async fn sources(
+    State(state): State<SharedState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Response, crate::AppError> {
+    crate::health::sources(&state, &user).await
 }
 
 async fn not_found(
