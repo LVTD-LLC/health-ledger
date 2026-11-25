@@ -230,6 +230,7 @@ fn account_actions(state: &AppState, page: &Page<'_>) -> Markup {
                     }
                     div class="account-dropdown" {
                         div class="account-identity" { span { "Signed in as" } strong { (user.email) } }
+                        a href="/sources" aria-current=[(page.path == "/sources").then_some("page")] { "Data sources" }
                         @if user.is_admin {
                             a href="/admin" aria-current=[(page.path == "/admin").then_some("page")] { "Admin panel" }
                         }

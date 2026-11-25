@@ -1100,7 +1100,11 @@ async fn account_navigation_and_appearance_match_enabled_features(pool: PgPool) 
     let header = dashboard.split("<header").nth(1).unwrap().split("</header>").next().unwrap();
     assert!(header.contains("href=\"/dashboard\" aria-current=\"page\""));
     assert!(header.contains("Account menu") && header.contains("owner@example.com"));
+    assert!(header.contains("href=\"/sources\"") && header.contains("Data sources"));
     assert!(header.contains("href=\"/settings\"") && header.contains("action=\"/sign-out\""));
+    assert!(!dashboard.contains("Agent access"));
+    let (_, _, sources) = send(&app, get("/sources", Some(&cookie))).await;
+    assert!(sources.contains("href=\"/sources\" aria-current=\"page\""));
     assert_eq!(header.contains("href=\"/docs\""), cfg!(feature = "docs"));
     assert_eq!(header.contains("href=\"/blog\""), cfg!(feature = "blog"));
     let (_, _, settings) = send(&app, get("/settings", Some(&cookie))).await;
@@ -2881,15 +2885,47 @@ async fn renpho_connection_requires_owner_and_origin(pool: PgPool) {
     let router = app(pool);
     let path = "/health/renpho/connect";
     let body = "email=scale%40example.test&password=";
+    let (anon_status, anon_headers, _) = send(&router, get("/sources", None)).await;
+    assert_eq!(anon_status, StatusCode::SEE_OTHER);
+    assert_eq!(anon_headers[header::LOCATION], "/sign-in");
+    let (status, _, sources) = send(&router, get("/sources", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(sources.contains(path));
+    assert!(sources.contains("signs you out"));
+    assert!(sources.contains("Hevy"));
+    assert!(sources.contains("id=\"direct-sync\"") && sources.contains("id=\"phone-exporters\""));
+    assert!(sources.contains("id=\"manual-import\"") && sources.contains("id=\"format-guide\""));
     let (_, _, dashboard) = send(&router, get("/dashboard", Some(&cookie))).await;
-    assert!(dashboard.contains(path));
-    assert!(dashboard.contains("signs you out"));
-    assert!(dashboard.contains("Hevy"));
+    assert!(!dashboard.contains("Agent access"));
+    assert!(!dashboard.contains("href=\"#sources\""));
     let mut cross_origin = form(path, body, Some(&cookie));
     cross_origin.headers_mut().insert(header::ORIGIN, "https://other.example".parse().unwrap());
     assert_eq!(send(&router, cross_origin).await.0, StatusCode::FORBIDDEN);
     assert_eq!(send(&router, form(path, body, Some(&cookie))).await.0, StatusCode::UNPROCESSABLE_ENTITY);
     assert_ne!(send(&router, form(path, body, None)).await.0, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[cfg(feature = "auth")]
+#[sqlx::test(migrations = "../migrations")]
+async fn dashboard_summarizes_metrics_and_renders_trend_graph(pool: PgPool) {
+    let (_, cookie) = settings_user(&pool, "trends@example.test").await;
+    let router = app(pool);
+    for (title, val, unit, at) in [
+        ("Weight", "80.35", "kg", "2026-08-01T08%3A00%3A00Z"),
+        ("Weight", "84.55", "kg", "2026-11-21T08%3A00%3A00Z"),
+        ("Body fat", "18.4", "%25", "2026-11-21T08%3A00%3A00Z"),
+    ] {
+        let payload = format!("kind=Measurement&title={title}&value={val}&unit={unit}&note=&at={at}");
+        assert_eq!(send(&router, form("/health/records", &payload, Some(&cookie))).await.0, StatusCode::SEE_OTHER);
+    }
+    let (status, _, body) = send(&router, get("/dashboard", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("class=\"summary-strip\""));
+    assert!(body.contains("class=\"trend-chart-svg\""));
+    assert!(body.contains("class=\"chart-grid\""));
+    assert!(body.contains("class=\"metric-grid\""));
+    assert!(body.contains("84.55") && body.contains("18.4"));
+    assert!(body.contains("Latest across your metrics"));
 }
 
 #[cfg(feature = "auth")]

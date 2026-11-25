@@ -181,7 +181,7 @@ pub async fn connect_renpho(
 async fn save_connection(s: &SharedState, owner: uuid::Uuid, id: &str, data: &Value) -> Result<Redirect, AppError> {
     let encrypted = crate::health::seal(owner, &serde_json::to_vec(data)?)?;
     sqlx::query!("INSERT INTO health_cloud_sources(user_id,provider,credential) VALUES($1,$2,$3) ON CONFLICT(user_id,provider) DO UPDATE SET credential=EXCLUDED.credential,cursor_json='{}',next_sync=now(),status='Queued'",owner,id,encrypted).execute(&s.pool).await?;
-    Ok(Redirect::to("/dashboard#sources"))
+    Ok(Redirect::to("/sources"))
 }
 pub async fn disconnect(
     State(s): State<SharedState>,
@@ -196,5 +196,5 @@ pub async fn disconnect(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(Redirect::to("/dashboard#sources"))
+    Ok(Redirect::to("/sources"))
 }
