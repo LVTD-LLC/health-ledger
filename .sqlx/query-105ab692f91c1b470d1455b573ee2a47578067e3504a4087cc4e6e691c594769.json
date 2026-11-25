@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO health_files(user_id,name,purpose,source,content,batch_hash) VALUES($1,'device-export.json','import','Device export',$2,$3) ON CONFLICT(user_id,batch_hash) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bytea",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "105ab692f91c1b470d1455b573ee2a47578067e3504a4087cc4e6e691c594769"
+}

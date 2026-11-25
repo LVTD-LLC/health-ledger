@@ -57,6 +57,10 @@ pub async fn dashboard(state: &SharedState, user: &app_auth::User, filter: Filte
     let connection = sqlx::query_scalar!("SELECT status FROM health_connections WHERE user_id=$1", user.id)
         .fetch_optional(&state.pool)
         .await?;
+    let has_key = sqlx::query_scalar!("SELECT user_id FROM health_ingest_tokens WHERE user_id=$1", user.id)
+        .fetch_optional(&state.pool)
+        .await?
+        .is_some();
     let hour = sqlx::query_scalar!("SELECT hour_utc FROM health_reminders WHERE user_id=$1", user.id)
         .fetch_optional(&state.pool)
         .await?;
@@ -91,6 +95,10 @@ pub async fn dashboard(state: &SharedState, user: &app_auth::User, filter: Filte
                 h3 {"Intervals.icu"} p {"Connect your personal API key to import daily wellness and training activities. Recent records refresh every six hours."}
                 @if let Some(status)=connection { p {(status)} form method="post" action="/health/disconnect" {button {"Disconnect"}} }
                 @else {form method="post" action="/health/connect" {label {"Intervals.icu API key" input type="password" required name="token" maxlength="256" autocomplete="off";} button {"Connect"} }}
+                h3 {"Apple Health and device exporters"}
+                p {"In Health Auto Export on iOS, create a REST API automation, select JSON, then paste the endpoint and Authorization header shown with your key. Choose a historical range for the first export and enable the schedule for new data."}
+                form method="post" action="/health/exporter" {button { @if has_key {"Replace exporter key"} @else {"Create exporter key"} }}
+                @if has_key {form method="post" action="/health/exporter/revoke" {button {"Revoke exporter key"}}}
                 h3 {"Import an export"} p {"Upload Apple Health export.zip or export.xml, Strava activities.csv, Fitbit data JSON, or a CSV with a date and measurements. Column headings become metric names; keep units in the headings. Use ISO dates with an offset when available."}
                 (upload_form("import"))
             }
@@ -306,4 +314,61 @@ pub async fn reminder(
         return Err(invalid("Choose an hour from 0 to 23."));
     }
     Ok(home())
+}
+
+/// Dedicated write-only credential for on-device exporters.
+pub async fn issue_token(State(s): State<SharedState>, CurrentUser(u): CurrentUser) -> Result<Response, AppError> {
+    let mut random = [0u8; 32];
+    getrandom::fill(&mut random)?;
+    let token = format!("hli_{}", hex::encode(random));
+    let digest = Sha256::digest(token.as_bytes()).to_vec();
+    sqlx::query!("INSERT INTO health_ingest_tokens(user_id,token_hash) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET token_hash=EXCLUDED.token_hash",u.id,digest).execute(&s.pool).await?;
+    let body = html! {section class="ledger"{h1{"Connect an exporter"} p{"Copy these settings into your exporter. This key is shown once."}
+    dl { dt{"Method"} dd{"POST"} dt{"Endpoint"} dd{code{(s.cfg.site_url) "/ingest/v1/health"}} dt{"Request header"} dd{code{"Authorization: Bearer " (token)}} dt{"Format"} dd{"JSON"} }
+    a href="/dashboard#sources" {"Back to sources"} }};
+    Ok((
+        [(header::CACHE_CONTROL, "private, no-store")],
+        axum::response::Html(
+            views::layout(
+                &s,
+                views::Page { title: "Connect an exporter", path: "/health/exporter", user: Some(&u), body },
+            )
+            .into_string(),
+        ),
+    )
+        .into_response())
+}
+pub async fn revoke_token(State(s): State<SharedState>, CurrentUser(u): CurrentUser) -> Result<Response, AppError> {
+    sqlx::query!("DELETE FROM health_ingest_tokens WHERE user_id=$1", u.id).execute(&s.pool).await?;
+    Ok(home())
+}
+pub async fn ingest(
+    State(s): State<SharedState>,
+    headers: axum::http::HeaderMap,
+    request: axum::extract::Request,
+) -> Result<Response, AppError> {
+    let unauthorized = || AppError::Status(StatusCode::UNAUTHORIZED, "Valid exporter key required.".into());
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .filter(|v| v.starts_with("hli_") && v.len() == 68)
+        .ok_or_else(unauthorized)?;
+    let hash = Sha256::digest(token.as_bytes()).to_vec();
+    let owner = sqlx::query_scalar!("SELECT user_id FROM health_ingest_tokens WHERE token_hash=$1", hash)
+        .fetch_optional(&s.pool)
+        .await?
+        .ok_or_else(unauthorized)?;
+    let raw = axum::body::to_bytes(request.into_body(), 8 * 1024 * 1024)
+        .await
+        .map_err(|_| invalid("Split batches at 8 MiB."))?;
+    let data: Value = serde_json::from_slice(&raw).map_err(|_| invalid("Invalid JSON."))?;
+    if !["metrics", "workouts", "medications", "stateOfMind", "symptoms"].iter().any(|k| data["data"][k].is_array())
+        && !data["records"].is_array()
+    {
+        return Err(invalid("Supply Health Auto Export data or a records array."));
+    }
+    let batch = Sha256::digest(&raw).to_vec();
+    sqlx::query!("INSERT INTO health_files(user_id,name,purpose,source,content,batch_hash) VALUES($1,'device-export.json','import','Device export',$2,$3) ON CONFLICT(user_id,batch_hash) DO NOTHING",owner,raw.as_ref(),batch).execute(&s.pool).await?;
+    Ok((StatusCode::ACCEPTED, axum::Json(json!({"status":"accepted"}))).into_response())
 }

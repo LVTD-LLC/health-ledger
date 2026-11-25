@@ -34,3 +34,11 @@ Connect to `https://YOUR-HOST/mcp` using OAuth consent or a personal API key cre
 GitHub Actions checks the selected features on main, builds a revision-tagged GHCR image, deploys using a CapRover app token, and verifies the revision from /healthz. Set APP_TOKEN and CAPROVER_SERVER as repository secrets and PRODUCTION_URL as a repository variable. Configure persistent Postgres, SITE_URL, the Mailgun verification settings and HEALTH_CONNECTION_KEY at runtime. Retain the connection key across deploys and back up the database, which includes the original documents. See [generated operational notes](docs/shiprust-operations.md) for account and operator commands.
 
 [MIT license](LICENSE.md). Generated with ShipRust and released under MIT for this repository by LVTD LLC.
+
+### Scheduled device exports
+
+In Sources, create a write-only exporter key. For Apple Health, set up [Health Auto Export's REST automation](https://help.healthyapps.dev/en/health-auto-export/automations/rest-api/) with the displayed POST URL and Authorization header. Select JSON, turn on batching and pick a schedule. Use the historical export option to send older readings. Supported arrays include metrics and workouts. Other exporters can POST the following structure to the same endpoint. Split batches at 8 MiB and reuse a stable source and ID across retries.
+
+```json
+{"records":[{"id":"scale-123","source":"Home scale","timestamp":"2026-01-02T08:30:00+01:00","kind":"Measurement","metric":"Weight","value":70.5,"unit":"kg"}]}
+```

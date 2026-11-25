@@ -83,6 +83,8 @@ pub fn router(state: SharedState) -> Router {
         .route("/dashboard", get(dashboard))
         .route("/health/records", post(crate::health::add))
         .route("/health/records/{id}/delete", post(crate::health::delete_record))
+        .route("/health/exporter", post(crate::health::issue_token))
+        .route("/health/exporter/revoke", post(crate::health::revoke_token))
         .route("/health/connect", post(crate::health::connect))
         .route("/health/disconnect", post(crate::health::disconnect))
         .route("/health/reminder", post(crate::health::reminder))
@@ -146,7 +148,7 @@ pub fn router(state: SharedState) -> Router {
     // Forms are small. The one multipart upload gets its own, larger limit.
     let router = router.layer(RequestBodyLimitLayer::new(64 * 1024));
     #[cfg(feature = "auth")]
-    let router = router.merge(
+    let router = router.route("/ingest/v1/health", post(crate::health::ingest)).merge(
         Router::new()
             .route("/health/files", post(crate::health::upload))
             .layer(axum::extract::DefaultBodyLimit::max(crate::health::BODY_LIMIT))

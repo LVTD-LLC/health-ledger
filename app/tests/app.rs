@@ -404,7 +404,7 @@ async fn assets_are_immutable(pool: PgPool) {
 async fn embedded_migrator_is_this_projects_schema(pool: PgPool) {
     app::MIGRATOR.run(&pool).await.unwrap();
     let latest = app::MIGRATOR.iter().map(|m| m.version).max();
-    assert_eq!(latest, Some(16), "expected migrations 0001..0016");
+    assert_eq!(latest, Some(18), "expected migrations 0001..0018");
     sqlx::query("SELECT id FROM sessions LIMIT 0").execute(&pool).await.unwrap();
     sqlx::query("SELECT id, redirect_uris FROM oauth_clients LIMIT 0").execute(&pool).await.unwrap();
     sqlx::query("SELECT code_hash, code_challenge FROM oauth_codes LIMIT 0").execute(&pool).await.unwrap();

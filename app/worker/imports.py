@@ -101,8 +101,37 @@ def csv_records(stream, source):
                 yield record(when,'Measurement',name,value,(unit.group(1) or unit.group(2)) if unit else '',source=source)
 
 
-def fitbit(stream, source, filename):
+def mobile_export(data, source):
+    for metric in data.get('metrics', []):
+        for point in metric['data']:
+            when=point.get('date') or point.get('start') or point.get('sleepStart')
+            for field,value in point.items():
+                if not when or type(value) not in (int,float):
+                    continue
+                title=metric['name'] if field=='qty' else metric['name']+' '+field
+                yield record(when,'Sleep' if 'sleep' in title else 'Measurement',title,value,metric.get('units',''),
+                             point.get('value',''),point.get('source') or source,
+                             [metric['name'],field,when,point.get('end'),point.get('value')])
+    for group,kind in [('workouts','Workout'),('medications','Medicine'),('stateOfMind','Check-in'),('symptoms','Symptom')]:
+        for row in data.get(group,[]):
+            when=next((row[k] for k in ('start','date','startDate','scheduledDate','time','logDate') if row.get(k)),None)
+            if when:
+                name=row.get('name') or row.get('medicationName') or row.get('label') or kind
+                detail={k:v for k,v in row.items() if isinstance(v,(str,float,int)) and k!='id'}
+                yield record(when,kind,name,row.get('duration',row.get('doseQuantity','')),'s' if group=='workouts' else row.get('unit',''),
+                             json.dumps(detail,ensure_ascii=False),source,[group,row.get('id') or detail])
+
+
+def json_records(stream, source, filename):
     data = json.load(stream)
+    if isinstance(data,dict) and isinstance(data.get('records'),list):
+        for r in data['records']:
+            yield record(r['timestamp'],r.get('kind','Measurement'),r['metric'],r.get('value',''),r.get('unit',''),
+                         r.get('note',''),r.get('source') or source,r.get('id'))
+        return
+    if isinstance(data,dict) and isinstance(data.get('data'),dict):
+        yield from mobile_export(data['data'],source)
+        return
     if not isinstance(data,list):
         raise ValueError('Expected a Fitbit JSON array.')
     name = re.sub(r'[-_ ]?\d{4}-\d{2}-\d{2}.*$', '', PurePosixPath(filename).stem)
@@ -139,6 +168,6 @@ def parse_file(filename, payload, source):
     elif ext=='.csv' or ext=='.tsv':
         yield from csv_records(stream,source)
     elif ext=='.json':
-        yield from fitbit(stream,source,filename)
+        yield from json_records(stream,source,filename)
     else:
         raise ValueError('Supported imports are Apple Health XML/ZIP, CSV, TSV and Fitbit JSON.')
