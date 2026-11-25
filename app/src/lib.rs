@@ -41,6 +41,8 @@ pub mod docs;
 mod errors;
 #[cfg(feature = "auth")]
 pub mod health;
+#[cfg(feature = "auth")]
+pub mod health_oauth;
 pub mod jobs;
 #[cfg(feature = "mcp")]
 pub mod mcp;
@@ -49,12 +51,16 @@ pub mod oauth_server;
 pub mod og;
 #[cfg(feature = "auth")]
 pub mod passkeys;
+#[cfg(feature = "auth")]
+pub mod regimens;
 pub mod routes;
 #[cfg(feature = "auth")]
 pub mod settings;
 #[cfg(feature = "social-login")]
 pub mod social_login;
 mod structured_data;
+#[cfg(feature = "auth")]
+pub mod trends;
 #[cfg(feature = "auth")]
 pub mod two_factor;
 #[cfg(feature = "qdrant")]

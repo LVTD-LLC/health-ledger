@@ -8,6 +8,22 @@
     const d = new Date(el.dateTime);
     if (Number.isFinite(d.getTime())) el.textContent = d.toLocaleString();
   }
+  const nav = document.querySelector('.ledger-nav');
+  const sections = [...document.querySelectorAll('.ledger > section[id]')];
+  const links = [...nav.querySelectorAll('a[href^="#"]')];
+  function showSection() {
+    const requested = location.hash.slice(1);
+    const current = links.some(link => link.hash === '#' + requested) ? requested : 'timeline';
+    for (const section of sections) {
+      section.hidden = section.id !== current && !(section.id === 'trend' && current === 'timeline');
+    }
+    for (const link of links) {
+      if (link.hash === '#' + current) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    }
+  }
+  window.addEventListener('hashchange', showSection);
+  showSection();
   const Recognizer = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognizer) return;
   const button = document.querySelector('#dictate');

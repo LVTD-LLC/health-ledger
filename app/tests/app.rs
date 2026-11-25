@@ -404,7 +404,7 @@ async fn assets_are_immutable(pool: PgPool) {
 async fn embedded_migrator_is_this_projects_schema(pool: PgPool) {
     app::MIGRATOR.run(&pool).await.unwrap();
     let latest = app::MIGRATOR.iter().map(|m| m.version).max();
-    assert_eq!(latest, Some(18), "expected migrations 0001..0018");
+    assert_eq!(latest, Some(20), "expected migrations 0001..0020");
     sqlx::query("SELECT id FROM sessions LIMIT 0").execute(&pool).await.unwrap();
     sqlx::query("SELECT id, redirect_uris FROM oauth_clients LIMIT 0").execute(&pool).await.unwrap();
     sqlx::query("SELECT code_hash, code_challenge FROM oauth_codes LIMIT 0").execute(&pool).await.unwrap();
@@ -1760,7 +1760,10 @@ async fn mcp_serves_the_account_tool_with_api_keys(pool: PgPool) {
     let tools = call(&app, rpc("tools/list", serde_json::json!({}))).await;
     let names: Vec<&str> =
         tools["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["get_account", "search_health_records", "search_documents", "read_document"]);
+    assert_eq!(
+        names,
+        ["get_account", "search_health_records", "search_documents", "read_document", "list_medications"]
+    );
 
     let (status, _, me) = send(&app, bearer("/api/v1/me", Some(&key))).await;
     assert_eq!(status, StatusCode::OK);
@@ -2843,4 +2846,30 @@ async fn health_journal_is_account_scoped(pool: PgPool) {
     assert_eq!(app::health::records(&pool, owner.id, "Example", 0).await.unwrap().len(), 1);
     send(&router, form(&path, "", Some(&cookie))).await;
     assert!(app::health::records(&pool, owner.id, "Example", 0).await.unwrap().is_empty());
+}
+
+#[cfg(feature = "auth")]
+#[sqlx::test(migrations = "../migrations")]
+async fn medication_courses_can_be_queried_for_a_day(pool: PgPool) {
+    let (u, cookie) = settings_user(&pool, "journal@example.test").await;
+    let router = app(pool.clone());
+    assert_eq!(
+        send(
+            &router,
+            form(
+                "/health/medicines",
+                "name=Example&dose=5+mg&schedule=Morning&starts=2026-01-02&ends=2026-02-01",
+                Some(&cookie)
+            )
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    for (date, count) in [("2026-01-01", 0), ("2026-01-02", 1), ("2026-02-01", 1), ("2026-02-02", 0)] {
+        assert_eq!(
+            app::regimens::list(&pool, u.id, Some(app::regimens::date(date).unwrap())).await.unwrap().len(),
+            count
+        );
+    }
 }

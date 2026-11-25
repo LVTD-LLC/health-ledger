@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM health_oauth_attempts WHERE user_id=$1 AND provider=$2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "182bf17b97f115e2c2cb2bf664321db721c499d48c3f28a3bd339c3e5261d579"
+}

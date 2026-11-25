@@ -75,7 +75,7 @@ impl Tools for ProductTools<'_> {
 /// its arguments. Describe each tool for a model, not a programmer: say
 /// what it returns and when to use it.
 pub fn tools() -> Vec<Value> {
-    vec![
+    let mut registered = vec![
         json!({
             "name": "get_account",
             "title": "Account",
@@ -98,7 +98,13 @@ pub fn tools() -> Vec<Value> {
             "inputSchema":{"type":"object","properties":{"id":{"type":"string","format":"uuid"},"offset":{"type":"integer","minimum":0}},"required":["id"],"additionalProperties":false},
             "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}
         }),
-    ]
+    ];
+    registered.push(json!({
+        "name":"list_medications","description":"List your medication and supplement courses, with dose, schedule and dates. Supply a date to see which courses were active then.",
+        "inputSchema":{"type":"object","properties":{"date":{"type":"string","format":"date"}},"additionalProperties":false},
+        "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}
+    }));
+    registered
 }
 
 /// Run one tool. `Ok(None)` means the name is unknown; the protocol layer
@@ -117,6 +123,11 @@ async fn call(state: &SharedState, user: &User, name: &str, arguments: Value) ->
                 _ => user.email.clone(),
             };
             tool_result(format!("This key belongs to {who}."), account)
+        }
+        "list_medications" => {
+            let on = arguments["date"].as_str().map(crate::regimens::date).transpose()?;
+            let courses = crate::regimens::list(&state.pool, user.id, on).await?;
+            tool_result(serde_json::to_string(&courses).unwrap_or_default(), json!({"courses":courses}))
         }
         "search_health_records" => {
             let rows = crate::health::records(&state.pool, user.id, query, offset).await?;

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM health_cloud_sources WHERE user_id=$1 AND provider=$2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "58283f3bed7f255f1c5261ddd8efaefbc9c424679a16946d236a9da9c7d40a32"
+}

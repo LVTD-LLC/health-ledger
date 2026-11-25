@@ -16,7 +16,7 @@ default = ["auth", "api", "mcp", "storage"]
 # Accounts: email-code sign-up, sign-in, passkeys, two-factor, settings, the dashboard
 # and the admin panel. Off means a public site with no accounts; the features below
 # that act on behalf of a user turn it on.
-auth = ["axum/multipart", "time/parsing"]
+auth = ["axum/multipart", "time/parsing", "reqwest/json"]
 # Sign up and sign in with Google (OpenID Connect), linked from account settings.
 # Hidden until GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set.
 google = ["social-login", "dep:jsonwebtoken"]

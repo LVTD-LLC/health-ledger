@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO health_oauth_attempts(user_id,provider,state_hash,expires) VALUES ($1,$2,$3,now()+interval '10 minutes') ON CONFLICT(user_id,provider) DO UPDATE SET state_hash=EXCLUDED.state_hash,expires=EXCLUDED.expires",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2a93c4c108fde70aeefb47f707ab98d7b2c5212f25d8a86bf74bea46b680e345"
+}

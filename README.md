@@ -42,3 +42,11 @@ In Sources, create a write-only exporter key. For Apple Health, set up [Health A
 ```json
 {"records":[{"id":"scale-123","source":"Home scale","timestamp":"2026-01-02T08:30:00+01:00","kind":"Measurement","metric":"Weight","value":70.5,"unit":"kg"}]}
 ```
+
+### Google Health / Fitbit and Withings cloud sync
+
+Register a web OAuth client for the [Google Health API](https://developers.google.com/health) or [Withings Public API](https://developer.withings.com/). Set the corresponding CLIENT_ID and CLIENT_SECRET from .env.example. Callback URLs are `https://YOUR-HOST/health/cloud/google-health/callback` and `https://YOUR-HOST/health/cloud/withings/callback`. The Connect button becomes available when the deployment has both values. Users authorize access at the provider. Tokens are encrypted with HEALTH_CONNECTION_KEY. Disconnect removes local credentials and stops imports. Users can also revoke access at the provider.
+
+Google imports weight, height, body fat, resting heart rate, sleep duration, steps, distance, exercise and heart rate. Withings imports measured body composition, pulse, blood pressure and other dated scale readings. The worker checkpoints each page, then refreshes every six hours. An approved provider client and an authorizing account are required for a live sync.
+
+The measurement history chart shows up to 90 readings for a metric and unit. Medicine and supplement courses record dose, schedule and start/end dates. Use `list_medications` with a calendar date to identify active courses. Individual doses can also be recorded as timeline entries. The JSON importer accepts FHIR Observation resources and Bundles with dated lab values, units and reference ranges. Hevy and Strong workout CSVs with exercise and rep columns import individual sets.

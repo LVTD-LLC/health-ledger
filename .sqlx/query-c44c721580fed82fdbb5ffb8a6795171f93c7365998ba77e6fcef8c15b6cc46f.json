@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO health_cloud_sources(user_id,provider,credential) VALUES($1,$2,$3) ON CONFLICT(user_id,provider) DO UPDATE SET credential=EXCLUDED.credential,cursor_json='{}',next_sync=now(),status='Queued'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c44c721580fed82fdbb5ffb8a6795171f93c7365998ba77e6fcef8c15b6cc46f"
+}

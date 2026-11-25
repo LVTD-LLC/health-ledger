@@ -6,9 +6,9 @@
   --fg-muted: #78716c;
   --border: #e7e5e4;
   --border-strong: #d6d3d1;
-  --accent: #b7410e;
+  --accent: #226c5b;
   --accent-fg: #ffffff;
-  --accent-soft: #fdf1ea;
+  --accent-soft: #e5f4ee;
   --card: #ffffff;
   --shadow: 0 1px 2px rgba(0,0,0,.04);
   --radius: 12px;
@@ -23,9 +23,9 @@
   --fg-muted: #a8a29e;
   --border: #292524;
   --border-strong: #3f3a37;
-  --accent: #e8794a;
+  --accent: #86cead;
   --accent-fg: #0c0a09;
-  --accent-soft: #2a1a12;
+  --accent-soft: #17382d;
   --card: #141211;
   --shadow: none;
   color-scheme: dark;
@@ -347,3 +347,27 @@ img.account-avatar { object-fit: cover; }
 .ledger-row p,.ledger-row h3 { margin: .2rem 0 }
 .ledger-text { white-space: pre-wrap; overflow-wrap: anywhere }
 .ledger-hero .screen-title-soft { color: var(--ledger-accent) }
+
+
+.ledger { max-width: 62rem }
+.ledger h1 { margin-bottom: 1.4rem }
+.ledger section { border-bottom-color: var(--border); scroll-margin-top: 4rem }
+.ledger-nav { padding-bottom: 1rem; border-bottom: 1px solid var(--border); gap: .25rem; align-items: center }
+.ledger-nav a { padding: .4rem .8rem; border-radius: 2rem; font-weight: 550; color: var(--fg-muted) }
+.ledger-nav a[aria-current] { background: var(--accent-soft); color: var(--accent) }
+.ledger button { border: 1px solid var(--border-strong); background: var(--card); color: var(--fg); font-weight: 550 }
+.ledger button.btn-primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent) }
+.ledger :is(input,select,textarea) { border-color: var(--border-strong); background: var(--bg-soft) }
+.ledger .ledger-search { display: flex; max-width: 36rem }
+.ledger-row { border-color: var(--border) }
+.ledger :is(p,small,dd) { color: var(--fg-muted) }
+.ledger small { font-variant-numeric: tabular-nums }
+.ledger h3 { margin: 1.4rem 0 .4rem }
+.ledger .ledger-row h3 { margin: .2rem 0 }
+.ledger #trend { background: var(--accent-soft); padding: 1.4rem; margin-top: 1rem; border-radius: var(--radius) }
+.ledger #trend svg { display: block; color: var(--accent); max-width: 100%; width: 100%; height: 7rem; margin: 1rem 0 }
+.ledger details { margin: 1rem 0 }
+.ledger summary { cursor: pointer; font-weight: 650 }
+.source-guide dt { font-weight: 650; margin-top: .75rem }
+.source-guide dd { margin-left: 0 }
+.ledger [hidden] { display: none }
