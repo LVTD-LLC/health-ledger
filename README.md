@@ -1,6 +1,10 @@
 # Health Ledger
 
-An open-source personal health dashboard built with ShipRust, Rust and PostgreSQL. Keep a timeline of measurements, lab reports, medicines, supplements, exercise and physical or mental check-ins. Search by source, measurement or notes. Access your own records through the authenticated MCP server.
+Health Ledger is an open-source, self-hosted health journal. Run the server yourself and connect the Android app to its HTTPS address. Keep a timeline of measurements, lab reports, medicines, supplements, exercise and physical or mental check-ins. Search by source, measurement or notes. Access your own records through the authenticated MCP server.
+
+## Self-host and connect a phone
+
+Follow [Self-host Health Ledger and connect Android](app/content/docs/android-self-hosting.md) to deploy with Docker Compose, verify the instance, and connect from the web Sources page or Android sign-in. The guide includes daily sync, older Samsung history and publisher setup.
 
 ## Run locally
 
@@ -11,13 +15,14 @@ Start Postgres with `docker compose up -d db`. Copy `.env.example` to `.env`, se
 | Source | How to bring in data |
 | --- | --- |
 | Intervals.icu | Connect your personal API key under Sources. Backfill runs in 180-day windows back to 1970. Completed connections refresh the latest seven days every six hours. Disconnect removes the encrypted credential. |
-| Android Health Connect | Schedule JSON delivery from Health Connect Webhook. This includes selected records that Samsung Health and other compatible apps have written to the phone. |
+| Samsung Health | Under **Data sources → Samsung Health**, import your downloaded ZIP or measurement CSV. For ongoing sync, allow Samsung Health to write to Health Connect and connect the native app. |
+| Android Health Connect | Enable daily sync in the native app under Sources → Health Connect. This includes selected records that Samsung Health and other compatible apps have written to the phone. |
 | Apple Health | Export All Health Data from your profile. Upload the ZIP or export.xml. Records retain HealthKit source names and original units. |
 | Fitbit | Upload individual activity, heart rate, weight or sleep JSON arrays from an export. |
 | Strava | Upload activities.csv from your account archive. |
 | RENPHO | Connect your RENPHO email and password under Sources. Scale and smart tape history from your signed-in profile refreshes every six hours. See the single-session behavior below. |
 | Hevy | Connect through Hevy OAuth to import workout history, exercises and sets. Edits and deletions refresh every six hours. Workout CSV uploads also work. |
-| PICOOC, Samsung Health, Google Health, OPPO OHealth, Eight Sleep, FatSecret and other sources | Import compatible dated CSV measurements or records already present in an Apple Health export. A vendor name alone does not establish a direct cloud connection. |
+| PICOOC, Google Health, OPPO OHealth, Eight Sleep, FatSecret and other sources | Import compatible dated CSV measurements or records already present in an Apple Health export. A vendor name alone does not establish a direct cloud connection. |
 | Other devices or custom exports | Use a UTF-8 CSV with timestamp,metric,value,unit,kind,note columns, or a wide CSV with one numeric column per measurement. Include units in the column headings, e.g. Weight (kg). |
 
 Timestamps with offsets preserve the instant. Dates and times without an offset are interpreted as UTC. Repeat imports using the same source label to deduplicate. A 32 MiB upload limit applies; Apple ZIPs may expand to 256 MiB. Deleting an import file preserves the imported records. Delete records in the timeline or delete the account to remove everything.
@@ -46,7 +51,7 @@ In Sources, create a write-only exporter key. For Apple Health, set up [Health A
 {"records":[{"id":"scale-123","source":"Home scale","timestamp":"2026-01-02T08:30:00+01:00","kind":"Measurement","metric":"Weight","value":70.5,"unit":"kg"}]}
 ```
 
-On Android, enable Health Connect sharing in the source app and authorize [Health Connect Webhook](https://github.com/mcnaveen/health-connect-webhook) to read the desired record types. Add an HTTP webhook, choose JSON, enter the exporter endpoint and set the custom header `Authorization` to `Bearer YOUR_EXPORTER_KEY`. Test verifies the connection without adding sample readings. Run a custom historical range, then enable scheduled sync. History depends on the Android permissions granted and records available on the device. The importer keeps source app identifiers, sleep stages, exercise sessions, vitals, nutrition, body measurements and other supported readings. Phone exports are historical copies. Delete unwanted entries in Health Ledger.
+For Android, the native app syncs from Health Connect. If you already use a webhook exporter, expand **Use a separate webhook exporter** on the web Sources page for its URL and header. Historical coverage depends on what the source writes and the permissions granted. [Android setup and history](app/content/docs/android-self-hosting.md).
 
 ### RENPHO scale and tape
 
@@ -67,3 +72,13 @@ Google imports weight, height, body fat, resting heart rate, sleep duration, ste
 The measurement history chart shows up to 90 readings for a metric and unit. Medicine and supplement courses record dose, schedule and start/end dates. Use `list_medications` with a calendar date to identify active courses. Individual doses can also be recorded as timeline entries. The JSON importer accepts FHIR Observation resources and Bundles with dated lab values, units and reference ranges. Hevy and Strong workout CSVs with exercise and rep columns import individual sets.
 
 Samsung Health archives can be uploaded directly for body weight, heart rate, steps, blood pressure, oxygen saturation, sleep stages and exercise CSV members with supported columns. Fitbit ZIPs can contain multiple supported dated JSON files. Strava archives can contain activities.csv. The selected members in a ZIP may expand to 256 MiB total.
+
+### Health Ledger for Android
+
+The Kotlin app in `android/` runs on Android 14 or later. It opens on **Trends**, with daily averages, low–high ranges and reading counts for 7, 30 or 90 days and monthly charts for all time. The signed-in endpoint `/health/trends.json` groups measurements by unit and UTC calendar date. Older servers provide up to 90 recent readings per metric and the app labels partial periods. **Journal** shows the signed-in account’s entries in a native, searchable timeline. Tap a row for notes and provenance, or use **+** to add an entry. **More** opens medicines, documents, reminders and account settings. The app reads the private, session-authenticated `/health/timeline.json` endpoint and can read the existing dashboard on older servers.
+
+**Sources → Health Connect** connects the apps that share data on the phone. New connections include permitted steps, distance, heart rate, resting heart rate, sleep sessions, exercise sessions, weight, blood pressure and oxygen saturation, retaining the writing app’s source. Existing Samsung connections keep their prior scope, schedule and checkpoints. Select **Source apps → Include all apps** to expand an existing Samsung connection. When multiple apps record the same activity, their records appear separately.
+
+Choose **Schedule** for daily, hourly or manual updates. **History** enables older readings when permitted. **Sources** also opens cloud service setup and imports Samsung Health, Fitbit, Apple Health, Strava, CSV/TSV and FHIR files up to 32 MiB each. Imports are historical copies; disconnecting or deleting a phone reading keeps its journal entries. Reconnect after a new sign-in.
+
+With JDK 17, Android SDK 36 and an authorized phone, build and install from `android/` with `./gradlew :app:installDebug`. Run `./gradlew :app:lintDebug :app:connectedProbeAndroidTest` for lint and device tests. The probe variant has a separate application ID and uses synthetic records.

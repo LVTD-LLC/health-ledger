@@ -59,20 +59,16 @@ def csv_records(stream, source):
     except csv.Error:
         dialect = csv.excel
     rows = csv.reader(stream, dialect)
-    headers = next(rows, [])
-    # Samsung exports often start with a metadata line before their header.
-    if headers and headers[0].startswith("com.samsung.") and len(headers) < 5:
-        headers = next(rows, [])
-    headers = [
-        h.rsplit(".", 1)[-1].strip() if h.startswith("com.samsung.") else h.strip()
-        for h in headers
-    ]
+
+    def column_name(header):
+        if header.startswith("com.samsung."):
+            header = header.rsplit(".", 1)[-1]
+        return header.strip()
 
     def normalized(h):
         return re.sub(r"[^a-z0-9]+", " ", h.lower()).strip()
 
-    keys = [normalized(h) for h in headers]
-    for date_key in (
+    date_keys = (
         "timestamp",
         "date time",
         "datetime",
@@ -85,7 +81,20 @@ def csv_records(stream, source):
         "measurement date",
         "time",
         "date",
+    )
+    raw_headers = next(rows, [])
+    headers = [column_name(h) for h in raw_headers]
+    keys = [normalized(h) for h in headers]
+    # A short Samsung row may be either export metadata or the actual header.
+    if (
+        raw_headers
+        and raw_headers[0].startswith("com.samsung.")
+        and len(raw_headers) < 5
+        and not any(k in date_keys for k in keys)
     ):
+        headers = [column_name(h) for h in next(rows, [])]
+        keys = [normalized(h) for h in headers]
+    for date_key in date_keys:
         if date_key in keys:
             index = keys.index(date_key)
             break

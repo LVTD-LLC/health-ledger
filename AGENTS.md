@@ -1,6 +1,6 @@
 # AGENTS.md — operating manual for Health Ledger
 
-Health Ledger is a SaaS starter in Rust. This file is the contract for anyone,
+Health Ledger is a self-hosted journal built on a Rust SaaS starter. This file is the contract for anyone,
 human or agent, changing it. Read it fully before editing.
 
 ## What this is
@@ -65,6 +65,10 @@ migrations/          sqlx migrations, embedded by app/src/lib.rs (MIGRATOR), run
 _hosting/<host>/     optional files overlaid onto the root when that host is chosen;
                      never shipped as-is. caprover/ = GitHub Actions → GHCR → CapRover.
 ```
+
+## Self-hosted Android setup
+
+The operator and publisher runbook is in `app/content/docs/android-self-hosting.md`. The Android client uses the instance’s configured origin and public `/.well-known/health-ledger` descriptor. Validate that descriptor without sending credentials. The optional LEDGER_OPERATOR_EMAIL runtime setting is the contact address for the instance. Keep Samsung SDK binaries and signing keys outside the repository.
 
 ## Landing page
 

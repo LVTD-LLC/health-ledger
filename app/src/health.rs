@@ -1,7 +1,7 @@
 //! Account-owned measurements, journal entries, source connections and documents.
 use crate::{AppError, SharedState, views};
 use app_auth::CurrentUser;
-use axum::extract::{Form, Multipart, Path, State};
+use axum::extract::{Form, Multipart, Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use maud::{Markup, html};
@@ -54,6 +54,62 @@ pub async fn records(pool: &PgPool, owner: Uuid, term: &str, offset: i64) -> Res
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().map(|r| json!({"id":r.id,"time":r.occurred_at.format(&Rfc3339).unwrap_or_default(),"kind":r.kind,"title":r.title,"value":r.value,"unit":r.unit,"note":r.note,"source":r.source})).collect())
+}
+
+/// The signed-in phone journal uses the same search and pagination as the web timeline.
+pub async fn timeline_json(
+    State(state): State<SharedState>,
+    CurrentUser(user): CurrentUser,
+    Query(filter): Query<Filter>,
+) -> Result<Response, AppError> {
+    let rows = records(&state.pool, user.id, &filter.q, filter.offset).await?;
+    Ok(([(header::CACHE_CONTROL, "private, no-store")], axum::Json(rows)).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct SamsungDay {
+    date: String,
+    steps: u32,
+}
+
+/// A repeatable monthly import of local calendar totals. Dates use the same UTC chart buckets as Trends.
+pub async fn samsung_daily_steps(
+    State(state): State<SharedState>,
+    CurrentUser(user): CurrentUser,
+    axum::Json(days): axum::Json<Vec<SamsungDay>>,
+) -> Result<Response, AppError> {
+    if days.len() > 31 {
+        return Err(invalid("Send at most 31 daily totals at a time."));
+    }
+    let format = time::macros::format_description!("[year]-[month]-[day]");
+    let mut totals = BTreeMap::new();
+    for day in days {
+        let date = time::Date::parse(&day.date, format).map_err(|_| invalid("Use YYYY-MM-DD for each day."))?;
+        if totals.insert(date, i64::from(day.steps)).is_some() {
+            return Err(invalid("Each date may appear only once."));
+        }
+    }
+    let (dates, steps): (Vec<_>, Vec<_>) = totals.into_iter().unzip();
+    let written = sqlx::query!(
+        r#"INSERT INTO health_records (user_id, occurred_at, kind, title, value, unit, source, external_key)
+           SELECT $1, (d + time '12:00') AT TIME ZONE 'UTC', 'Measurement', 'Daily steps', n::text, 'steps',
+                  'Samsung Health', 'samsung-sdk/day/' || to_char(d, 'YYYY-MM-DD')
+           FROM unnest($2::date[], $3::bigint[]) AS days(d, n)
+           WHERE NOT EXISTS (SELECT 1 FROM health_records r WHERE r.user_id=$1 AND r.title IN ('Steps','Daily steps')
+               AND r.unit='steps' AND r.occurred_at >= d::timestamp AT TIME ZONE 'UTC'
+               AND r.occurred_at < (d+1)::timestamp AT TIME ZONE 'UTC'
+               AND (r.source <> 'Samsung Health' OR r.external_key IS DISTINCT FROM 'samsung-sdk/day/' || to_char(d, 'YYYY-MM-DD')))
+           ON CONFLICT (user_id,source,external_key) DO UPDATE SET value=EXCLUDED.value
+           WHERE health_records.value IS DISTINCT FROM EXCLUDED.value"#,
+        user.id,
+        &dates,
+        &steps
+    ).execute(&state.pool).await?.rows_affected();
+    Ok((
+        [(header::CACHE_CONTROL, "private, no-store")],
+        axum::Json(json!({"received": dates.len(), "changed": written})),
+    )
+        .into_response())
 }
 
 pub async fn dashboard(state: &SharedState, user: &app_auth::User, filter: Filter) -> Result<Response, AppError> {
@@ -431,7 +487,7 @@ pub async fn dashboard(state: &SharedState, user: &app_auth::User, filter: Filte
                     }
                 }
                 div class="card form-card" {
-                    (upload_form("document"))
+                    (upload_form(UploadKind::Document))
                 }
                 @if files.is_empty() {
                     div class="card empty-state" {
@@ -542,6 +598,8 @@ pub async fn sources(state: &SharedState, user: &app_auth::User) -> Result<Respo
                     div class="settings-toc-group" {
                         p class="settings-toc-title" { "Connections" }
                         ul {
+                            li { a href="#android-app" { "Connect your Android phone" } }
+                            li { a href="#samsung-health" { "Samsung Health" } }
                             li { a href="#direct-sync" { "Direct sync" } }
                             li { a href="#phone-exporters" { "Phone exporters" } }
                             li { a href="#manual-import" { "File import" } }
@@ -556,6 +614,50 @@ pub async fn sources(state: &SharedState, user: &app_auth::User) -> Result<Respo
                 }
 
                 div class="settings-sections sources-sections" {
+                    section class="settings-group" id="android-app" {
+                        h2 class="settings-group-title" { "Connect your Android phone" }
+                        p { "In the Health Ledger app, enter this server address and sign in with your account here." }
+                        p { code { (state.cfg.site_url) } }
+                        a class="btn" href={ "healthledger://connect?server=" (state.cfg.site_url) } { "Open in Health Ledger" }
+                        @if cfg!(feature = "docs") { p { a href="/docs/android-self-hosting" { "Android setup and troubleshooting" } } }
+                    }
+                    section class="settings-group" id="samsung-health" aria-labelledby="samsung-heading" {
+                        h2 class="settings-group-title" id="samsung-heading" { "Samsung Health" }
+                        article class="card source-card" {
+                            h3 { "Connect Samsung Health" }
+                            p { "Open Sources in the Android app. Health Connect syncs shared readings. Builds approved for direct Samsung access can also import historical daily steps." }
+                            h3 { "Import a file" }
+                            p { "On your phone, open Samsung Health → ⋮ → Settings → Download personal data. Tap Download. You’ll find the export in My Files → Downloads." }
+                            (upload_form(UploadKind::SamsungHealth))
+                            p class="muted small" {
+                                "Upload a ZIP up to 32 MiB. If your download is a folder, or the ZIP is locked or too large, choose an individual measurement CSV under 32 MiB from the extracted files."
+                            }
+                            details class="samsung-sync" {
+                                summary { "Use a separate webhook exporter" }
+                                ol {
+                                    li { "In Samsung Health → Settings → Health Connect, allow Samsung Health to write the readings you want to share." }
+                                    li {
+                                        "Install "
+                                        a href="https://play.google.com/store/apps/details?id=com.hcwebhook.app" rel="noreferrer" { "Health Connect to Webhook" }
+                                        " on this phone and grant it read access to those same readings."
+                                    }
+                                    li { "Add an HTTP webhook in the app. Use the setup details below, test the connection, then tap Sync Now and choose a schedule." }
+                                }
+                                @if has_key {
+                                    p class="hint" {
+                                        "Use your existing exporter key with " code { (state.cfg.site_url) "/ingest/v1/health" }
+                                        " and the Authorization header (Bearer followed by a space and your key). Replacing the key disconnects other exporters until you update them."
+                                    }
+                                }
+                                form method="post" action="/health/exporter?device=samsung" {
+                                    button class="btn" type="submit" {
+                                        @if has_key { "Replace exporter key for setup" } @else { "Get sync setup details" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     section class="settings-group" id="direct-sync" aria-labelledby="direct-sync-heading" {
                         h2 class="settings-group-title" id="direct-sync-heading" { "Direct sync" }
                         p class="muted small group-desc" { "Automatic background imports that pull your latest readings on a schedule." }
@@ -639,7 +741,7 @@ pub async fn sources(state: &SharedState, user: &app_auth::User) -> Result<Respo
                             div class="oauth-provider-grid" {
                                 @for provider in crate::health_oauth::PROVIDERS {
                                     @let cloud = clouds.iter().find(|x| x.provider == provider.id);
-                                    article class="card source-card source-card-compact" {
+                                    article class="card source-card source-card-compact" id={ "source-" (provider.id) } {
                                         div class="source-card-head" {
                                             div class="source-card-title" {
                                                 span class="source-icon" aria-hidden="true" { (provider_monogram(provider.id)) }
@@ -736,10 +838,10 @@ pub async fn sources(state: &SharedState, user: &app_auth::User) -> Result<Respo
                                     "Supports Apple Health export.zip or export.xml, Strava activities.csv, Fitbit JSON, Samsung Health exports, FHIR labs, or a dated CSV. Column headings become metric names; include units in headings and ISO dates with offsets when available."
                                 }
                             }
-                            (upload_form("import"))
+                            (upload_form(UploadKind::Import))
 
                             @if !imports.is_empty() {
-                                div class="recent-imports" {
+                                div class="recent-imports" id="recent-imports" {
                                     h4 { "Recent imports" }
                                     div class="admin-table-wrap" {
                                         table class="admin-table" {
@@ -771,10 +873,6 @@ pub async fn sources(state: &SharedState, user: &app_auth::User) -> Result<Respo
                             div class="card guide-card" {
                                 h3 { "PICOOC, OPPO OHealth & Eight Sleep" }
                                 p class="small muted" { "Bring across measurements already synced into Apple Health, or convert a personal export into the custom CSV schema." }
-                            }
-                            div class="card guide-card" {
-                                h3 { "Samsung Health" }
-                                p class="small muted" { "Upload the ZIP or a dated measurement CSV from Download personal data. Numeric columns become records; verify units against the app." }
                             }
                             div class="card guide-card" {
                                 h3 { "Strava, Strong & Hevy" }
@@ -908,22 +1006,35 @@ fn page_link(q: &str, offset: i64, label: &str) -> Markup {
     }
 }
 
-fn upload_form(purpose: &str) -> Markup {
+#[derive(Clone, Copy, PartialEq)]
+enum UploadKind {
+    Document,
+    Import,
+    SamsungHealth,
+}
+
+fn upload_form(kind: UploadKind) -> Markup {
     html! {
         form class="form ledger-form" method="post" action="/health/files" enctype="multipart/form-data" {
-            input type="hidden" name="purpose" value=(purpose);
-            @if purpose == "import" {
+            input type="hidden" name="purpose" value=(if kind == UploadKind::Document { "document" } else { "import" });
+            @if kind == UploadKind::SamsungHealth {
+                input type="hidden" name="source" value="Samsung Health";
+            } @else if kind == UploadKind::Import {
                 label {
                     "Source name"
-                    input name="source" required maxlength="80" placeholder="e.g. RENPHO, Samsung Health or FatSecret";
+                    input name="source" required maxlength="80" placeholder="e.g. RENPHO or FatSecret";
                 }
             }
             label {
-                "Choose file"
-                input name="file" type="file" required;
+                @if kind == UploadKind::SamsungHealth { "Samsung Health ZIP or CSV" } @else { "Choose file" }
+                input name="file" type="file" required accept=[(kind == UploadKind::SamsungHealth).then_some(".zip,.csv")];
             }
             button class="btn btn-primary" type="submit" {
-                @if purpose == "import" { "Upload & queue import" } @else { "Upload document" }
+                @match kind {
+                    UploadKind::SamsungHealth => "Import Samsung Health data",
+                    UploadKind::Import => "Upload & queue import",
+                    UploadKind::Document => "Upload document",
+                }
             }
         }
     }
@@ -1014,7 +1125,7 @@ pub async fn upload(
     .execute(&s.pool)
     .await?;
     if purpose == "import" {
-        Ok(Redirect::to("/sources#manual-import").into_response())
+        Ok(Redirect::to("/sources#recent-imports").into_response())
     } else {
         Ok(Redirect::to("/dashboard#files").into_response())
     }
@@ -1128,8 +1239,18 @@ pub async fn reminder(
     Ok(Redirect::to("/dashboard#reminders").into_response())
 }
 
+#[derive(Deserialize)]
+pub struct ExporterSetup {
+    device: Option<String>,
+}
+
 /// Dedicated write-only credential for on-device exporters.
-pub async fn issue_token(State(s): State<SharedState>, CurrentUser(u): CurrentUser) -> Result<Response, AppError> {
+pub async fn issue_token(
+    State(s): State<SharedState>,
+    CurrentUser(u): CurrentUser,
+    Query(setup): Query<ExporterSetup>,
+) -> Result<Response, AppError> {
+    let samsung = setup.device.as_deref() == Some("samsung");
     let mut random = [0u8; 32];
     getrandom::fill(&mut random)?;
     let token = format!("hli_{}", hex::encode(random));
@@ -1139,18 +1260,35 @@ pub async fn issue_token(State(s): State<SharedState>, CurrentUser(u): CurrentUs
         section class="page ledger" {
             header class="ledger-header" {
                 div {
-                    h1 { "Connect an exporter" }
+                    h1 { @if samsung { "Set up Samsung Health sync" } @else { "Connect an exporter" } }
                     p class="muted" { "Copy these settings into your phone exporter app. This key is shown once." }
                 }
-                a class="btn" href="/sources#phone-exporters" { "← Back to data sources" }
+                a class="btn" href=(if samsung { "/sources#samsung-health" } else { "/sources#phone-exporters" }) { "← Back to data sources" }
             }
             div class="card exporter-reveal" {
                 dl class="exporter-dl" {
                     dt { "Method" } dd { code { "POST" } }
-                    dt { "Endpoint" } dd { pre class="code-snippet" { code { (s.cfg.site_url) "/ingest/v1/health" } } }
-                    dt { "Request header" } dd { pre class="code-snippet" { code { "Authorization: Bearer " (token) } } }
+                    dt { "Endpoint" }
+                    dd {
+                        pre class="code-snippet" { code id="export-url" { (s.cfg.site_url) "/ingest/v1/health" } }
+                        button type="button" hidden class="btn btn-sm" data-copy="export-url" { "Copy URL" }
+                    }
+                    dt { @if samsung { "Manage Headers → JSON" } @else { "Request header" } }
+                    dd {
+                        pre class="code-snippet" { code id="export-header" {
+                            @if samsung { (json!({"Authorization": format!("Bearer {token}")})) }
+                            @else { "Authorization: Bearer " (token) }
+                        } }
+                        button type="button" hidden class="btn btn-sm" data-copy="export-header" { "Copy header" }
+                    }
                     dt { "Format" } dd { code { "JSON" } }
                 }
+                @if samsung {
+                    p { "Paste the URL into your HTTP webhook. Under Manage Headers → JSON, paste the header and tap Apply JSON. Save, test the connection, then use Sync Now to send readings." }
+                    a href="/dashboard#timeline" { "View your timeline" }
+                }
+                p class="hint" role="status" id="copy-status" {}
+                script defer src=(s.asset_url("health.js")) {}
             }
         }
     };
@@ -1159,7 +1297,12 @@ pub async fn issue_token(State(s): State<SharedState>, CurrentUser(u): CurrentUs
         axum::response::Html(
             views::layout(
                 &s,
-                views::Page { title: "Connect an exporter", path: "/health/exporter", user: Some(&u), body },
+                views::Page {
+                    title: if samsung { "Set up Samsung Health sync" } else { "Connect an exporter" },
+                    path: "/health/exporter",
+                    user: Some(&u),
+                    body,
+                },
             )
             .into_string(),
         ),

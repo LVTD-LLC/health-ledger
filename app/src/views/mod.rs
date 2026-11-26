@@ -28,7 +28,7 @@ pub const SITE_NAME: &str = "Health Ledger";
 pub const HOME_TITLE: &str = "Your health, in one journal";
 /// Search and link-preview summary for pages that do not pass their own description.
 pub const SITE_DESCRIPTION: &str =
-    "Collect measurements, medicines, workouts and lab reports in your personal health journal.";
+    "Collect measurements, medicines, workouts and lab reports in a health journal on your own server.";
 /// Alt text for `assets/og-image.png`; update both together (see app/og-image/).
 const OG_IMAGE_ALT: &str = "Your health, in one journal.";
 

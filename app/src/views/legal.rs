@@ -4,14 +4,13 @@
 
 use maud::{Markup, html};
 
-/// The legal entity that operates the app. Defaults to the product name.
+/// The software publisher for project attribution.
 pub const COMPANY: &str = "LVTD LLC";
-/// Where people send legal, privacy and refund requests.
+/// Project contact. Instance-specific requests go to the server operator.
 pub const CONTACT_EMAIL: &str = "rasul@lvtd.dev";
-/// Whose law governs the terms, e.g. "the State of Delaware, USA".
-pub const GOVERNING_LAW: &str = "the State of New Jersey, USA";
+
 /// Change whenever the substance of either page changes.
-pub const UPDATED: &str = "25 November 2026";
+pub const UPDATED: &str = "26 November 2026";
 /// Public legal pages, listed in the sitemap and IndexNow.
 pub const PAGES: &[(&str, &str, &str)] = &[
     (
@@ -42,7 +41,7 @@ fn legal_page(title: &str, intro: Markup, body: Markup) -> Markup {
                 p { (intro) }
                 (body)
                 h2 { "Contact" }
-                p { "Questions about this page? Email " a href={ "mailto:" (CONTACT_EMAIL) } { (CONTACT_EMAIL) } "." }
+                p { "For help with this account or a privacy request, " a href="/contact" { "contact your server operator" } "." }
             }
         }
     }
@@ -52,8 +51,7 @@ pub fn terms() -> Markup {
     legal_page(
         "Terms of Service",
         html! {
-            "These terms govern your use of " (super::SITE_NAME) ", operated by " (COMPANY)
-            " (\"we\", \"us\"). "
+            "These terms cover this self-hosted " (super::SITE_NAME) " instance. We and us refer to the operator of this server. "
             @if cfg!(feature = "auth") { "By creating an account you agree to them." } @else { "By using it you agree to them." }
         },
         html! {
@@ -69,7 +67,7 @@ pub fn terms() -> Markup {
                 p {
                     "Paid plans are billed in advance through Stripe. Subscriptions renew automatically until you cancel "
                     "them from the billing page; cancelling stops future charges and keeps access until the end of the "
-                    "period you paid for. For refunds, email " a href={ "mailto:" (CONTACT_EMAIL) } { (CONTACT_EMAIL) } "."
+                    "period you paid for. For refunds, contact " a href="/contact" { "the operator" } "."
                 }
             }
             h2 { "Your content" }
@@ -97,7 +95,7 @@ pub fn terms() -> Markup {
             }
             h2 { "Limitation of liability" }
             p {
-                "To the extent the law allows, " (COMPANY) " is not liable for indirect, incidental or consequential "
+                "To the extent the law allows, the operator is not liable for indirect, incidental or consequential "
                 "damages, or lost profits or data. Our total liability for any claim is limited to the amount you paid us "
                 "in the 12 months before it."
             }
@@ -107,8 +105,6 @@ pub fn terms() -> Markup {
                 @if cfg!(feature = "auth") { "If a change is material we will tell account holders before it takes effect. " }
                 "Continuing to use the service after that means you accept the new terms."
             }
-            h2 { "Governing law" }
-            p { "These terms are governed by the laws of " (GOVERNING_LAW) ", without regard to conflict-of-law rules." }
         },
     )
 }
@@ -117,10 +113,11 @@ pub fn privacy() -> Markup {
     legal_page(
         "Privacy Policy",
         html! {
-            "This policy explains what personal data " (COMPANY) " collects when you use " (super::SITE_NAME)
-            ", why, and what you can do about it. We collect only what we need to run the service and never sell it."
+            "Your journal is stored on this self-hosted server. This policy describes what its operator processes when you use " (super::SITE_NAME) "."
         },
         html! {
+            h2 { "Android sync" }
+            p { "When you connect a source, the phone sends the permitted measurements to your selected server. Background sync continues on the schedule you enable. Disconnect in Sources to stop future transfers. Previously imported copies can be deleted in your journal." }
             h2 { "Your health journal" }
             p { "We store the measurements, source credentials, notes, documents and extracted text you choose to add. Account deletion removes these records from the live database. Connecting RENPHO sends your sign-in details to RENPHO. The worker replaces the password with an encrypted session after sign-in. Connecting Hevy authorizes read access to your workouts. Uploaded documents are processed on the server. A connected AI client can read your records and document text until you revoke its access. When you use dictation your browser may send audio to its speech service." }
             h2 { "What we collect" }

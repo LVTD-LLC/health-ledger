@@ -1,0 +1,55 @@
+name: health-ledger-selfhost
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ledger
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate the database password}
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "ledger"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SITE_URL: https://${LEDGER_DOMAIN:?Set your server hostname}
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?}@db/ledger
+      MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:?Set your verified US Mailgun domain}
+      MAILGUN_SENDING_KEY: ${MAILGUN_SENDING_KEY:?Set your Mailgun sending key}
+      LEDGER_OPERATOR_EMAIL: ${LEDGER_OPERATOR_EMAIL:-}
+      MAIL_FROM: ${MAIL_FROM:?Set a sender address}
+      EMAIL_VERIFICATION_KEY: ${EMAIL_VERIFICATION_KEY:?Generate the verification key}
+      GOOGLE_HEALTH_CLIENT_ID: ${GOOGLE_HEALTH_CLIENT_ID:-}
+      GOOGLE_HEALTH_CLIENT_SECRET: ${GOOGLE_HEALTH_CLIENT_SECRET:-}
+      WITHINGS_CLIENT_ID: ${WITHINGS_CLIENT_ID:-}
+      WITHINGS_CLIENT_SECRET: ${WITHINGS_CLIENT_SECRET:-}
+      HEVY_CLIENT_ID: ${HEVY_CLIENT_ID:-}
+      HEVY_CLIENT_SECRET: ${HEVY_CLIENT_SECRET:-}
+      HEALTH_CONNECTION_KEY: ${HEALTH_CONNECTION_KEY:?Generate the connection key}
+    volumes:
+      - storage:/app/storage
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      LEDGER_DOMAIN: ${LEDGER_DOMAIN:?}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - caddy_config:/config
+volumes:
+  postgres:
+  storage:
+  certificates:
+  caddy_config:

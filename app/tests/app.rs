@@ -162,7 +162,7 @@ async fn legal_pages_render_and_list_only_enabled_services(pool: PgPool) {
         let (status, _, body) = send(&app, get(path, None)).await;
         assert_eq!(status, StatusCode::OK, "{path}");
         assert!(body.contains(&format!("<h1>{heading}</h1>")), "{path}");
-        assert!(body.contains(&format!("mailto:{}", app::views::legal::CONTACT_EMAIL)), "{path}");
+        assert!(body.contains("href=\"/contact\""), "{path}");
         assert!(home.contains(&format!(r#"href="{path}""#)), "{path}");
     }
     let (_, _, terms) = send(&app, get("/terms", None)).await;
@@ -186,7 +186,11 @@ async fn company_pages_expose_contact_and_public_metadata(pool: PgPool) {
     for (path, page_type) in [("/about", Some("AboutPage")), ("/contact", Some("ContactPage")), ("/privacy", None)] {
         let (status, _, body) = send(&app, get(path, None)).await;
         assert_eq!(status, StatusCode::OK, "{path}");
-        assert!(body.contains(&format!("mailto:{}", app::views::legal::CONTACT_EMAIL)), "{path}");
+        if path != "/privacy" {
+            assert!(body.contains(&format!("mailto:{}", app::views::legal::CONTACT_EMAIL)), "{path}");
+        } else {
+            assert!(body.contains("self-hosted server") && body.contains("contact your server operator"));
+        }
         assert!(body.contains("index, follow"), "{path}");
         assert!(home.contains(&format!(r#"href="{path}""#)), "{path}");
         if let Some(page_type) = page_type {
@@ -2909,6 +2913,7 @@ async fn renpho_connection_requires_owner_and_origin(pool: PgPool) {
 #[sqlx::test(migrations = "../migrations")]
 async fn dashboard_summarizes_metrics_and_renders_trend_graph(pool: PgPool) {
     let (_, cookie) = settings_user(&pool, "trends@example.test").await;
+    let (_, peer) = settings_user(&pool, "other-trends@example.test").await;
     let router = app(pool);
     for (title, val, unit, at) in [
         ("Weight", "80.35", "kg", "2026-08-01T08%3A00%3A00Z"),
@@ -2918,6 +2923,38 @@ async fn dashboard_summarizes_metrics_and_renders_trend_graph(pool: PgPool) {
         let payload = format!("kind=Measurement&title={title}&value={val}&unit={unit}&note=&at={at}");
         assert_eq!(send(&router, form("/health/records", &payload, Some(&cookie))).await.0, StatusCode::SEE_OTHER);
     }
+    let path = "/health/timeline.json?q=weight&offset=1";
+    let (status, headers, json) = send(&router, get(path, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CACHE_CONTROL], "private, no-store");
+    let rows: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 1);
+    assert_eq!(rows[0]["value"], "80.35");
+    assert_eq!(send(&router, get("/health/timeline.json", Some(&peer))).await.2, "[]");
+    assert_eq!(send(&router, get(path, None)).await.0, StatusCode::SEE_OTHER);
+    let path = "/health/trends.json?range=all";
+    let (status, headers, body) = send(&router, get(path, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CACHE_CONTROL], "private, no-store");
+    let series: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(series["metrics"].as_array().unwrap().len(), 2);
+    let weight = series["metrics"].as_array().unwrap().iter().find(|m| m["title"] == "Weight").unwrap();
+    let weight_id = weight["id"].as_str().unwrap();
+    let add = "kind=Measurement&title=Weight&value=70.45&unit=kg&note=&at=2026-08-02T08%3A00%3A00Z";
+    assert_eq!(send(&router, form("/health/records", add, Some(&cookie))).await.0, StatusCode::SEE_OTHER);
+    let path = format!("/health/trends.json?range=all&metric={weight_id}");
+    let (_, _, body) = send(&router, get(&path, Some(&cookie))).await;
+    let series: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let first = &series["buckets"][0];
+    assert_eq!(first["date"], "2026-08-01");
+    assert_eq!(first["count"], 2);
+    assert_eq!(first["mean"].as_str().unwrap().parse::<f64>().unwrap(), 75.4);
+    assert_eq!(first["low"], "70.45");
+    assert_eq!(first["high"], "80.35");
+    let (_, _, body) = send(&router, get(&path, Some(&peer))).await;
+    let peer_series: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(peer_series["buckets"], serde_json::json!([]));
+    assert_eq!(send(&router, get(&path, None)).await.0, StatusCode::SEE_OTHER);
     let (status, _, body) = send(&router, get("/dashboard", Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("class=\"summary-strip\""));
@@ -2926,6 +2963,31 @@ async fn dashboard_summarizes_metrics_and_renders_trend_graph(pool: PgPool) {
     assert!(body.contains("class=\"metric-grid\""));
     assert!(body.contains("84.55") && body.contains("18.4"));
     assert!(body.contains("Latest across your metrics"));
+}
+
+#[cfg(feature = "auth")]
+#[sqlx::test(migrations = "../migrations")]
+async fn mobile_trends_aggregate_every_reading_in_the_requested_utc_days(pool: PgPool) {
+    let (_, cookie) = settings_user(&pool, "daily-trends@example.test").await;
+    let router = app(pool);
+    let today = time::OffsetDateTime::now_utc().date();
+    let first = today - time::Duration::days(6);
+    for (day, count, value) in [(first - time::Duration::days(1), 1, 1000), (first, 91, 2), (today, 1, 0)] {
+        let form_data = format!("kind=Measurement&title=Pulse&value={value}&unit=bpm&note=&at={day}T00%3A00%3A00Z");
+        for _ in 0..count {
+            assert_eq!(
+                send(&router, form("/health/records", &form_data, Some(&cookie))).await.0,
+                StatusCode::SEE_OTHER
+            );
+        }
+    }
+    let (_, _, body) = send(&router, get("/health/trends.json?range=7d", Some(&cookie))).await;
+    let data: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let days = data["buckets"].as_array().unwrap();
+    assert_eq!(days.len(), 2);
+    assert_eq!(days[0]["date"], first.to_string());
+    assert_eq!(days[0]["count"], 91);
+    assert_eq!(days[1]["low"], "0");
 }
 
 #[cfg(feature = "auth")]
@@ -2951,4 +3013,102 @@ async fn android_exporter_can_test_then_queue_health_data(pool: PgPool) {
     assert_eq!(send(&router, post(key, live)).await.0, StatusCode::ACCEPTED);
     let (_, _, dashboard) = send(&router, get("/dashboard", Some(&cookie))).await;
     assert_eq!(dashboard.matches("device-export.json").count(), 1);
+}
+
+#[cfg(feature = "auth")]
+#[sqlx::test(migrations = "../migrations")]
+async fn samsung_setup_accepts_an_export_without_typing_a_source(pool: PgPool) {
+    let (_, cookie) = settings_user(&pool, "samsung-owner@example.test").await;
+    let router = app(pool);
+    let (_, _, sources) = send(&router, get("/sources", Some(&cookie))).await;
+    let samsung = sources.split_once("id=\"samsung-health\"").unwrap().1.split_once("</section>").unwrap().0;
+    assert!(samsung.contains("name=\"source\" value=\"Samsung Health\""));
+    assert!(samsung.contains("accept=\".zip,.csv\""));
+    assert!(samsung.contains("action=\"/health/exporter?device=samsung\""));
+
+    let data = concat!(
+        "--test\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nimport\r\n",
+        "--test\r\nContent-Disposition: form-data; name=\"source\"\r\n\r\nSamsung Health\r\n",
+        "--test\r\nContent-Disposition: form-data; name=\"file\"; filename=\"weight.csv\"\r\n\r\n",
+        "start_time,weight\n2026-01-01,72.2\r\n--test--\r\n"
+    );
+    let request = Request::post("/health/files")
+        .header(header::ORIGIN, "http://test.local")
+        .header(header::COOKIE, &cookie)
+        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=test")
+        .body(Body::from(data))
+        .unwrap();
+    let (status, headers, _) = send(&router, request).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/sources#recent-imports");
+    let (_, _, sources) = send(&router, get("/sources", Some(&cookie))).await;
+    assert!(sources.contains("weight.csv") && sources.contains("Queued"));
+
+    // The Android client verifies its current web session before queuing a batch.
+    let verify = |cookie: Option<&str>| {
+        let mut request = Request::head("/dashboard");
+        if let Some(cookie) = cookie {
+            request = request.header(header::COOKIE, cookie);
+        }
+        request.body(Body::empty()).unwrap()
+    };
+    assert_eq!(send(&router, verify(Some(&cookie))).await.0, StatusCode::OK);
+    let (status, headers, _) = send(&router, verify(None)).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/sign-in");
+
+    let (status, headers, details) = send(&router, form("/health/exporter?device=samsung", "", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CACHE_CONTROL], "private, no-store");
+    assert!(details.contains("{&quot;Authorization&quot;:&quot;Bearer hli_"));
+    let (_, _, sources) = send(&router, get("/sources", Some(&cookie))).await;
+    assert!(sources.contains("Use your existing exporter key"));
+}
+
+#[cfg(feature = "auth")]
+#[sqlx::test(migrations = "../migrations")]
+async fn android_discovers_configured_server_and_imports_only_missing_days(pool: PgPool) {
+    let (owner, cookie) = settings_user(&pool, "steps-owner@example.test").await;
+    let (_, other) = settings_user(&pool, "steps-other@example.test").await;
+    let router = app(pool.clone());
+    let req =
+        Request::get("/.well-known/health-ledger").header(header::HOST, "bad.example").body(Body::empty()).unwrap();
+    let (status, _, body) = send(&router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&body).unwrap(),
+        serde_json::json!({"application":"health-ledger","mobile_api":1,"site_url":"http://test.local"})
+    );
+    let (_, _, page) = send(&router, get("/sources", Some(&cookie))).await;
+    assert!(page.contains("healthledger://connect?server=http://test.local"));
+    let post = |cookie: &str, origin: &str, body: &str| {
+        Request::post("/health/samsung/daily-steps")
+            .header(header::COOKIE, cookie)
+            .header(header::ORIGIN, origin)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_owned()))
+            .unwrap()
+    };
+    let origin = "http://test.local";
+    let batch = r#"[{"date":"2018-04-21","steps":12},{"date":"2018-04-22","steps":5}]"#;
+    assert_ne!(send(&router, post("", origin, batch)).await.0, StatusCode::OK);
+    assert_eq!(send(&router, post(&cookie, "https://other.example", batch)).await.0, StatusCode::FORBIDDEN);
+    let raw = "kind=Measurement&title=Steps&value=2&unit=steps&note=&at=2018-04-21T10%3A00%3A00Z";
+    assert_eq!(send(&router, form("/health/records", raw, Some(&cookie))).await.0, StatusCode::SEE_OTHER);
+    for (payload, expected) in [(batch, 1), (batch, 0), (r#"[{"date":"2018-04-22","steps":25}]"#, 1)] {
+        let (status, _, body) = send(&router, post(&cookie, origin, payload)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap()["changed"], expected);
+    }
+    let days = app::health::records(&pool, owner.id, "Daily steps", 0).await.unwrap();
+    assert_eq!(days.len(), 1);
+    assert_eq!(days[0]["value"], "25");
+    assert_eq!(send(&router, get("/health/timeline.json?q=Daily", Some(&other))).await.2, "[]");
+    for invalid in [
+        batch.replace("04-22", "04-21"),
+        batch.replace("04-22", "04-32"),
+        serde_json::to_string(&vec![serde_json::json!({"date":"2018-04-01","steps":6}); 32]).unwrap(),
+    ] {
+        assert_eq!(send(&router, post(&cookie, origin, &invalid)).await.0, StatusCode::UNPROCESSABLE_ENTITY);
+    }
 }

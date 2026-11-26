@@ -1,0 +1,10 @@
+.gradle/
+.kotlin/
+local.properties
+.idea/
+**/build/
+
+# Licensed SDK binaries and private release material
+*.aar
+*.jks
+*.keystore

@@ -1,5 +1,11 @@
 //! Plot numeric measurements over time and build cross-metric dashboard summaries.
+use crate::{AppError, SharedState};
+use app_auth::CurrentUser;
+use axum::extract::{Query, State};
+use axum::http::header;
+use axum::response::{IntoResponse, Response};
 use maud::{Markup, html};
+use serde::Serialize;
 use sqlx::PgPool;
 use std::collections::HashSet;
 use time::{Date, Duration, Month, OffsetDateTime};
@@ -57,7 +63,7 @@ impl Range {
     const ALL: [Self; 4] = [Self::Days30, Self::Days90, Self::Year1, Self::All];
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 struct MetricOption {
     id: Uuid,
     title: String,
@@ -77,13 +83,7 @@ pub struct Overview {
     pub metrics_grid: Markup,
 }
 
-/// Fetch numeric measurements and render both the interactive trend chart and summary cards.
-pub async fn overview(
-    pool: &PgPool,
-    owner: Uuid,
-    selected: Option<Uuid>,
-    range: Range,
-) -> Result<Overview, sqlx::Error> {
+async fn metric_options(pool: &PgPool, owner: Uuid) -> Result<Vec<MetricOption>, sqlx::Error> {
     let raw_options = sqlx::query!(
         "SELECT DISTINCT ON(title,unit) id,title,unit FROM health_records WHERE user_id=$1 AND kind IN ('Measurement','Lab','Sleep','Nutrition') AND value ~ '^[+-]?[0-9]+([.][0-9]+)?$' ORDER BY title,unit,occurred_at DESC,id DESC LIMIT 250",
         owner
@@ -91,19 +91,77 @@ pub async fn overview(
     .fetch_all(pool)
     .await?;
 
-    let options: Vec<MetricOption> =
-        raw_options.into_iter().map(|r| MetricOption { id: r.id, title: r.title, unit: r.unit }).collect();
+    Ok(raw_options.into_iter().map(|r| MetricOption { id: r.id, title: r.title, unit: r.unit }).collect())
+}
 
-    if options.is_empty() {
-        return Ok(Overview { total_metrics: 0, latest_date: None, chart: html! {}, metrics_grid: html! {} });
-    }
-
-    let chosen = options
+fn choose_metric(options: &[MetricOption], selected: Option<Uuid>) -> Option<&MetricOption> {
+    options
         .iter()
         .find(|o| Some(o.id) == selected)
         .or_else(|| options.iter().min_by_key(|o| (metric_priority(&o.title), o.title.to_ascii_lowercase())))
-        .unwrap_or(&options[0])
-        .clone();
+}
+
+/// Aggregate the selected metric in UTC calendar buckets before transferring it to the phone.
+pub async fn aggregates(
+    State(state): State<SharedState>,
+    CurrentUser(user): CurrentUser,
+    Query(filter): Query<crate::health::Filter>,
+) -> Result<Response, AppError> {
+    let options = metric_options(&state.pool, user.id).await?;
+    let chosen = choose_metric(&options, filter.metric);
+    let today = OffsetDateTime::now_utc().date();
+    let days = match filter.range.as_str() {
+        "7d" => Some(7),
+        "90d" => Some(90),
+        "all" => None,
+        _ => Some(30),
+    };
+    let mut buckets = Vec::new();
+    if let Some(metric) = chosen {
+        let start = days.map(|n| (today - Duration::days(n - 1)).midnight().assume_utc());
+        let until = (today + Duration::days(1)).midnight().assume_utc();
+        let period = if days.is_some() { "day" } else { "month" };
+        let rows = sqlx::query!(
+            r#"SELECT date_trunc($4, occurred_at AT TIME ZONE 'UTC')::date AS "day!",
+                      count(*) AS "count!", avg(value::numeric)::text AS "mean!",
+                      min(value::numeric)::text AS "low!", max(value::numeric)::text AS "high!"
+               FROM health_records
+               WHERE user_id=$1 AND title=$2 AND unit=$3
+                 AND kind IN ('Measurement','Lab','Sleep','Nutrition')
+                 AND value ~ '^[+-]?[0-9]+([.][0-9]+)?$'
+                 AND ($5::timestamptz IS NULL OR occurred_at >= $5) AND occurred_at < $6
+               GROUP BY 1 ORDER BY 1"#,
+            user.id,
+            metric.title,
+            metric.unit,
+            period,
+            start,
+            until,
+        )
+        .fetch_all(&state.pool)
+        .await?;
+        buckets.extend(rows.into_iter().map(|r| {
+            serde_json::json!({
+                "date": r.day.to_string(), "count": r.count, "mean": r.mean, "low": r.low, "high": r.high
+            })
+        }));
+    }
+    let data = serde_json::json!({"metrics": options, "selected": chosen.map(|m| m.id), "buckets": buckets, "today": today.to_string()});
+    Ok(([(header::CACHE_CONTROL, "private, no-store")], axum::Json(data)).into_response())
+}
+
+/// Fetch numeric measurements and render both the interactive trend chart and summary cards.
+pub async fn overview(
+    pool: &PgPool,
+    owner: Uuid,
+    selected: Option<Uuid>,
+    range: Range,
+) -> Result<Overview, sqlx::Error> {
+    let options = metric_options(pool, owner).await?;
+
+    let Some(chosen) = choose_metric(&options, selected).cloned() else {
+        return Ok(Overview { total_metrics: 0, latest_date: None, chart: html! {}, metrics_grid: html! {} });
+    };
 
     // Pick up to MAX_SUMMARY_CARDS metrics, always including the active metric first in priority order.
     let mut prioritized = options.clone();

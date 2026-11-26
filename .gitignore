@@ -9,3 +9,4 @@
 /mutants.out.old/
 
 __pycache__/
+/selfhost.env
