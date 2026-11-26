@@ -6,11 +6,13 @@ import json
 import os
 import time
 import uuid
+
+import hevy
+import picooc_sync
+import renpho_sync
 import requests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from imports import UTC, record
-import renpho_sync
-import hevy
 from renpho import RenphoAPIError
 
 # Collection ID, JSON field, value, unit, date field used for incremental reads.
@@ -234,7 +236,7 @@ def process(cur, save):
                 (owner, provider),
             )
             return True
-        if provider != "renpho":
+        if provider not in ("renpho", "picooc"):
             refreshed = refresh(provider, tokens)
             if refreshed != tokens:
                 replace_credential(refreshed)
@@ -249,6 +251,8 @@ def process(cur, save):
             else:
                 if provider == "renpho":
                     rows, cursor, done = renpho_sync.page(tokens, cursor)
+                elif provider == "picooc":
+                    rows, cursor, done = picooc_sync.history(tokens), {}, True
                 else:
                     fetch = {"google-health": google_page, "withings": withings_page}[
                         provider
@@ -265,11 +269,11 @@ def process(cur, save):
         except Exception:
             cur.execute("ROLLBACK TO SAVEPOINT cloud_page")
             raise
-    except renpho_sync.ReconnectRequired:
+    except (renpho_sync.ReconnectRequired, picooc_sync.LoginRejected):
         replace_credential({})
         cur.execute(
-            "UPDATE health_cloud_sources SET next_sync='infinity', status='Reconnect RENPHO to resume importing.' WHERE user_id=%s AND provider=%s",
-            (owner, provider),
+            "UPDATE health_cloud_sources SET next_sync='infinity', status=%s WHERE user_id=%s AND provider=%s",
+            (f"Reconnect {provider.upper()} to resume importing.", owner, provider),
         )
         return True
     except (requests.RequestException, RenphoAPIError, ValueError, TypeError, KeyError):

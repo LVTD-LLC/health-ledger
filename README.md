@@ -22,7 +22,8 @@ Start Postgres with `docker compose up -d db`. Copy `.env.example` to `.env`, se
 | Strava | Upload activities.csv from your account archive. |
 | RENPHO | Connect your RENPHO email and password under Sources. Scale and smart tape history from your signed-in profile refreshes every six hours. See the single-session behavior below. |
 | Hevy | Connect through Hevy OAuth to import workout history, exercises and sets. Edits and deletions refresh every six hours. Workout CSV uploads also work. |
-| PICOOC, Google Health, OPPO OHealth, Eight Sleep, FatSecret and other sources | Import compatible dated CSV measurements or records already present in an Apple Health export. A vendor name alone does not establish a direct cloud connection. |
+| PICOOC | In **Sources → Direct sync → PICOOC smart scale**, connect your PICOOC email and password. The first sync reads your primary profile’s available scale history. The worker checks for changes every six hours. |
+| Google Health, OPPO OHealth, Eight Sleep, FatSecret and other sources | Import compatible dated CSV measurements or records already present in an Apple Health export. A vendor name alone does not establish a direct cloud connection. |
 | Other devices or custom exports | Use a UTF-8 CSV with timestamp,metric,value,unit,kind,note columns, or a wide CSV with one numeric column per measurement. Include units in the column headings, e.g. Weight (kg). |
 
 Timestamps with offsets preserve the instant. Dates and times without an offset are interpreted as UTC. Repeat imports using the same source label to deduplicate. A 32 MiB upload limit applies; Apple ZIPs may expand to 256 MiB. Deleting an import file preserves the imported records. Delete records in the timeline or delete the account to remove everything.
@@ -58,6 +59,14 @@ For Android, the native app syncs from Health Connect. If you already use a webh
 The direct connection uses the [unofficial RENPHO client](https://github.com/danvaneijck/renpho-api). A RENPHO login signs out the phone app. This matters for Bluetooth devices that use the phone app to upload new readings. If you need the app for each weigh-in, the scheduled Apple Health exporter may fit your workflow better.
 
 The worker exchanges the encrypted password for a session and uses that session to read your profile’s available weight, body composition, heart rate and tape measurements. It checks the full history every six hours and updates matching readings. A failed sign-in or expired session discards the stored credential and prompts you to reconnect. Disconnect stops scheduled reads and preserves the timeline.
+
+### PICOOC smart scale
+
+The PICOOC connection uses the international service through the [SmartScaleConnect client](https://github.com/AlexxIT/SmartScaleConnect/tree/v0.4.2/pkg/picooc). Use the email and password for the account whose **primary profile** you want to import. Family profiles on the same scale are excluded. Look under **Sources → PICOOC smart scale** for the result of the first sync, then open Trends to see weight and available body composition measurements.
+
+The worker signs in for each refresh, so your server keeps the credentials encrypted with `HEALTH_CONNECTION_KEY`. Repeated readings update the same journal entries. If PICOOC rejects sign-in, the worker clears the credentials and asks you to reconnect. Disconnecting stops future syncs and keeps the readings already in your journal.
+
+Docker includes the client. For a native worker, install the helper on its PATH with Go 1.24 or later by running `(cd app/worker/picooc && go build -mod=readonly -o /your/bin/health-ledger-picooc .)`, replacing `/your/bin` with a directory on the worker’s PATH.
 
 ### Hevy workouts
 

@@ -3,7 +3,7 @@ use crate::{AppError, SharedState};
 use app_auth::CurrentUser;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::Redirect;
+use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -76,12 +76,13 @@ pub async fn start(
     State(s): State<SharedState>,
     CurrentUser(u): CurrentUser,
     Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Redirect, AppError> {
     let p = provider(&id)?;
     let (client, _) = p.credentials().ok_or_else(unavailable)?;
     let mut random = [0u8; 32];
     getrandom::fill(&mut random)?;
-    let state = hex::encode(random);
+    let state = crate::routes::provider_state(&headers, hex::encode(random));
     let digest = Sha256::digest(state.as_bytes()).to_vec();
     sqlx::query!("INSERT INTO health_oauth_attempts(user_id,provider,state_hash,expires) VALUES ($1,$2,$3,now()+interval '10 minutes') ON CONFLICT(user_id,provider) DO UPDATE SET state_hash=EXCLUDED.state_hash,expires=EXCLUDED.expires",u.id,id,digest).execute(&s.pool).await?;
     let mut url = reqwest::Url::parse(p.authorize)?;
@@ -162,20 +163,40 @@ pub async fn callback(
 }
 
 #[derive(Deserialize)]
-pub struct RenphoLogin {
+pub struct ScaleLogin {
     email: String,
     password: String,
 }
 pub async fn connect_renpho(
     State(s): State<SharedState>,
     CurrentUser(u): CurrentUser,
-    axum::Form(input): axum::Form<RenphoLogin>,
-) -> Result<Redirect, AppError> {
+    axum::Form(input): axum::Form<ScaleLogin>,
+) -> Result<Response, AppError> {
+    connect_scale(&s, &u, "renpho", input).await
+}
+
+pub async fn connect_picooc(
+    State(s): State<SharedState>,
+    CurrentUser(u): CurrentUser,
+    axum::Form(input): axum::Form<ScaleLogin>,
+) -> Result<Response, AppError> {
+    connect_scale(&s, &u, "picooc", input).await
+}
+
+async fn connect_scale(
+    s: &SharedState,
+    user: &app_auth::User,
+    provider: &str,
+    input: ScaleLogin,
+) -> Result<Response, AppError> {
     let email = input.email.trim();
     if !email.contains('@') || email.len() > 320 || input.password.is_empty() || input.password.len() > 1024 {
-        return Err(AppError::Status(StatusCode::UNPROCESSABLE_ENTITY, "Enter your RENPHO email and password.".into()));
+        let page = crate::health::sources(s, user, Some((provider, email))).await?;
+        return Ok((StatusCode::UNPROCESSABLE_ENTITY, page).into_response());
     }
-    save_connection(&s, u.id, "renpho", &serde_json::json!({"email":email, "password":input.password})).await
+    Ok(save_connection(s, user.id, provider, &serde_json::json!({"email":email, "password":input.password}))
+        .await?
+        .into_response())
 }
 
 async fn save_connection(s: &SharedState, owner: uuid::Uuid, id: &str, data: &Value) -> Result<Redirect, AppError> {

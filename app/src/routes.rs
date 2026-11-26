@@ -98,6 +98,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/health/medicines/{id}/end", post(crate::regimens::end))
         .route("/health/medicines/{id}/delete", post(crate::regimens::delete))
         .route("/health/records/{id}/delete", post(crate::health::delete_record))
+        .route("/health/picooc/connect", post(crate::health_oauth::connect_picooc))
         .route("/health/renpho/connect", post(crate::health_oauth::connect_renpho))
         .route("/health/cloud/{provider}/connect", post(crate::health_oauth::start))
         .route("/health/cloud/{provider}/callback", get(crate::health_oauth::callback))
@@ -126,6 +127,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/billing/portal", post(billing_portal));
     #[cfg(feature = "api")]
     let router = router
+        .route("/mobile/sign-in/complete", post(crate::oauth_server::android_login))
         .route(crate::api::OPENAPI_PATH, get(crate::api::openapi_json))
         .nest(crate::api::BASE_PATH, crate::api::router())
         // The consent page is a browser form, so it stays behind the same-origin guard.
@@ -275,7 +277,7 @@ async fn sources(
     State(state): State<SharedState>,
     CurrentUser(user): CurrentUser,
 ) -> Result<Response, crate::AppError> {
-    crate::health::sources(&state, &user).await
+    crate::health::sources(&state, &user, None).await
 }
 
 async fn not_found(
@@ -545,6 +547,52 @@ async fn resend_verification(State(state): State<SharedState>, headers: HeaderMa
     Ok(verification_page(&state, status, seconds, Some(message)))
 }
 
+#[cfg(feature = "auth")]
+pub(crate) fn provider_state(headers: &HeaderMap, random: String) -> String {
+    if headers.get("x-ledger-client").is_some_and(|v| v == "android") { format!("android-{random}") } else { random }
+}
+
+/// Return browser consent to the phone that started it. Only the subsequent
+/// same-origin request with the original session/flow cookie consumes the code.
+#[cfg(feature = "auth")]
+fn android_provider_return(request: &axum::extract::Request) -> Option<Response> {
+    if request.method() != axum::http::Method::GET || request.headers().contains_key("x-ledger-client") {
+        return None;
+    }
+    let path = request.uri().path();
+    if !matches!(
+        path,
+        "/health/cloud/hevy/callback"
+            | "/health/cloud/withings/callback"
+            | "/health/cloud/google-health/callback"
+            | "/auth/google/callback"
+            | "/auth/github/callback"
+    ) {
+        return None;
+    }
+    let q = Query::<std::collections::HashMap<String, String>>::try_from_uri(request.uri()).ok()?;
+    let state = q.get("state")?;
+    let nonce = state.strip_prefix("android-")?;
+    if nonce.len() != 64 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut link = reqwest::Url::parse("healthledger://provider-return").ok()?;
+    link.set_path(path);
+    for key in ["state", "code", "error"] {
+        if let Some(value) = q.get(key) {
+            link.query_pairs_mut().append_pair(key, value);
+        }
+    }
+    let page = maud::html! { (maud::DOCTYPE) html { head { meta name="viewport" content="width=device-width,initial-scale=1"; title { "Return to Health Ledger" } } body { p { a href=(link.as_str()) { "Return to Health Ledger to finish" } } } } };
+    Some(
+        (
+            [(header::CACHE_CONTROL, "private, no-store"), (header::REFERRER_POLICY, "no-referrer")],
+            Html(page.into_string()),
+        )
+            .into_response(),
+    )
+}
+
 /// Auth forms require positive same-origin evidence, including clients without Fetch Metadata.
 #[cfg(feature = "auth")]
 async fn auth_origin(
@@ -552,6 +600,9 @@ async fn auth_origin(
     request: axum::extract::Request,
     next: middleware::Next,
 ) -> Response {
+    if let Some(response) = android_provider_return(&request) {
+        return response;
+    }
     // The sign-in provider and OAuth forms are only routed with their features.
     #[cfg(feature = "social-login")]
     let provider = crate::social_login::is_form_path(request.uri().path());
@@ -568,6 +619,8 @@ async fn auth_origin(
                     | "/verify-email/resend"
                     | "/health/samsung/daily-steps"
                     | "/health/renpho/connect"
+                    | "/health/picooc/connect"
+                    | "/mobile/sign-in/complete"
                     | "/passkeys/register/options"
                     | "/passkeys/register"
                     | "/passkeys/sign-in/options"

@@ -4,13 +4,13 @@ import os
 import uuid
 from unittest import TestCase, mock, skipUnless
 
+import cloud
+import hevy
 import psycopg2
+import renpho_sync
 import requests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from renpho import RenphoSessionError
-import cloud
-import hevy
-import renpho_sync
 from worker import save
 
 
@@ -68,14 +68,14 @@ class ConnectionTests(TestCase):
         self.conn.close()
         self.env.stop()
 
-    def seed(self):
+    def seed(self, provider="renpho"):
         nonce = os.urandom(12)
         cipher = nonce + self.aes.encrypt(
             nonce, b'{"email":"me@example.test","password":"fixture"}', self.aad
         )
         self.cur.execute(
-            "INSERT INTO health_cloud_sources(user_id,provider,credential) VALUES(%s,'renpho',%s)",
-            (self.owner, cipher),
+            "INSERT INTO health_cloud_sources(user_id,provider,credential) VALUES(%s,%s,%s)",
+            (self.owner, provider, cipher),
         )
 
     def state(self):
@@ -97,6 +97,53 @@ class ConnectionTests(TestCase):
             (self.owner,),
         )
         self.assertTrue(cloud.process(self.cur, save))
+
+    @mock.patch("picooc_sync.subprocess.run")
+    def test_picooc_scheduled_backfill_edits_and_reconnect(self, run):
+        self.seed("picooc")
+        sample = {
+            "Date": "2019-07-01T07:30:00+02:00",
+            "Weight": 71.8,
+            "BodyFat": 0,
+            "BodyWater": 55,
+            "Source": "test-scale",
+        }
+        result = run.return_value
+        result.returncode = 0
+        result.stdout = json.dumps([sample]).encode()
+        self.tick()
+        self.assertTrue(self.state()[1].startswith("Synced"))
+        self.assertFalse(cloud.process(self.cur, save))
+        self.cur.execute(
+            "SELECT next_sync-now() FROM health_cloud_sources WHERE user_id=%s",
+            (self.owner,),
+        )
+        self.assertEqual(self.cur.fetchone()[0].total_seconds(), 21600)
+        result.stdout = json.dumps(
+            [{**sample, "Weight": 72, "Date": "2019-07-01T05:30:00Z"}]
+        ).encode()
+        self.tick()
+        self.cur.execute(
+            "SELECT title,value,unit FROM health_records WHERE user_id=%s AND source='PICOOC' ORDER BY title",
+            (self.owner,),
+        )
+        self.assertEqual(
+            self.cur.fetchall(), [("Body water", "55", "%"), ("Weight", "72", "kg")]
+        )
+        self.assertEqual(run.call_args.args, (["health-ledger-picooc"],))
+        self.assertEqual(json.loads(run.call_args.kwargs["input"]), self.state()[0])
+        result.returncode = 1
+        self.tick()
+        credentials, status, parked = self.state()
+        self.assertEqual(credentials["email"], "me@example.test")
+        self.assertIn("retry", status)
+        self.assertFalse(parked)
+        result.returncode = 2
+        self.tick()
+        self.assertEqual(
+            self.state(), ({}, "Reconnect PICOOC to resume importing.", True)
+        )
+        self.assertFalse(cloud.process(self.cur, save))
 
     @mock.patch("renpho_sync.RenphoClient")
     def test_exchange_backfill_replay_and_expired_session(self, client):

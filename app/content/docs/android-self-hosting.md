@@ -50,6 +50,12 @@ On a Samsung phone, first open **Samsung Health → Settings → Health Connect*
 
 **More → Server address** lets you change instances. Switching signs this phone out locally and stops its scheduled transfers. Sign in and authorize sync again on the destination. Existing entries stay on their original server.
 
+## Connect a PICOOC scale
+
+Open **Sources → PICOOC** in the Android app. Enter your PICOOC account email and password, then tap **Connect PICOOC**. The server imports your primary profile’s weigh-ins and checks for new readings every six hours, even when the phone is offline. Open PICOOC again to check the last sync, or open **Trends** to see the measurements. Disconnecting stops future imports and keeps the entries already in your journal.
+
+Sign-in, source setup, settings, medicines, reminders and documents use Android controls. Passkey verification and external provider authorization open in the system browser. Return to Health Ledger when prompted. Browser-assisted passkey sign-in requires the server’s default `api` feature.
+
 ## Older Samsung history
 
 Health Connect can only return readings the source has shared with it. Granting history access can extend the query window but cannot supply missing records. For older readings, use Samsung Health's **Settings → Download personal data** and import the ZIP or a measurement CSV under **Sources → Samsung Health**. Leave Health Connect connected for future readings.

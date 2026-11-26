@@ -47,6 +47,13 @@ jobs:
       # SQLx tests apply migrations to their disposable databases themselves.
       - run: bash scripts/check-fast.sh
       - run: cargo test --locked --workspace
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: app/worker/picooc/go.sum
+      - name: Test PICOOC primary profile sync
+        working-directory: app/worker/picooc
+        run: go test -mod=readonly ./...
       - name: Check export parsers and document extraction
         run: |
           python3 -m venv /tmp/ledger-tests

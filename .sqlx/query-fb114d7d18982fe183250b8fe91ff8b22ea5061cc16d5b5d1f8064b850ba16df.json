@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth_clients c WHERE c.id <> 'health-ledger-android' AND COALESCE(c.last_used_at, c.created_at) < now() - make_interval(days => $1) AND NOT EXISTS (SELECT 1 FROM oauth_tokens t WHERE t.client_id = c.id) AND NOT EXISTS (SELECT 1 FROM oauth_codes o WHERE o.client_id = c.id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fb114d7d18982fe183250b8fe91ff8b22ea5061cc16d5b5d1f8064b850ba16df"
+}

@@ -23,12 +23,24 @@ ARG BUILD_REVISION=development
 ENV BUILD_REVISION=${BUILD_REVISION}
 RUN cargo build --locked --release -p health-ledger
 
+FROM golang:1.26-bookworm AS picooc
+WORKDIR /src
+COPY app/worker/picooc/go.mod app/worker/picooc/go.sum ./
+RUN go mod download
+COPY app/worker/picooc/*.go ./
+RUN go test -mod=readonly ./... && CGO_ENABLED=0 go build -mod=readonly -trimpath -o /out/health-ledger-picooc . \
+    && mkdir -p /out/licenses \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/AlexxIT/SmartScaleConnect)/LICENSE" /out/licenses/SmartScaleConnect \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/google/uuid)/LICENSE" /out/licenses/google-uuid
+
 FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl python3-venv python3-psycopg2 python3-requests python3-cryptography python3-defusedxml poppler-utils tesseract-ocr-eng tesseract-ocr \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --create-home app
 WORKDIR /app
+COPY --from=picooc /out/licenses /usr/share/doc/health-ledger-picooc/licenses
+COPY --from=picooc /out/health-ledger-picooc /usr/local/bin/health-ledger-picooc
 COPY --from=builder /app/target/release/health-ledger /usr/local/bin/health-ledger
 COPY app/worker/requirements.txt /tmp/health-worker-requirements.txt
 RUN python3 -m venv --system-site-packages /opt/health-worker \

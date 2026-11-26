@@ -408,7 +408,7 @@ async fn assets_are_immutable(pool: PgPool) {
 async fn embedded_migrator_is_this_projects_schema(pool: PgPool) {
     app::MIGRATOR.run(&pool).await.unwrap();
     let latest = app::MIGRATOR.iter().map(|m| m.version).max();
-    assert_eq!(latest, Some(21), "expected migrations 0001..0021");
+    assert_eq!(latest, Some(22), "expected migrations 0001..0022");
     sqlx::query("SELECT id FROM sessions LIMIT 0").execute(&pool).await.unwrap();
     sqlx::query("SELECT id, redirect_uris FROM oauth_clients LIMIT 0").execute(&pool).await.unwrap();
     sqlx::query("SELECT code_hash, code_challenge FROM oauth_codes LIMIT 0").execute(&pool).await.unwrap();
@@ -1918,6 +1918,50 @@ async fn oauth_discovery_follows_the_api_feature(pool: PgPool) {
     assert_eq!(json_of(&body)["error"], "invalid_client");
 }
 
+#[cfg(feature = "api")]
+#[sqlx::test(migrations = "../migrations")]
+async fn native_browser_sign_in_requires_consent_and_single_use_pkce(pool: PgPool) {
+    let (_, owner) = settings_user(&pool, "native-login@example.test").await;
+    let app = app(pool);
+    let callback = "http%3A%2F%2F127.0.0.1%3A45678%2Fandroid-sign-in";
+    let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let consent = format!(
+        "client_id=health-ledger-android&response_type=code&redirect_uri={callback}&state=fixture&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256"
+    );
+    let (_, _, page) = send(&app, get(&format!("/oauth/authorize?{consent}"), Some(&owner))).await;
+    assert!(page.contains("Sign in to the Health Ledger app running on this device"));
+    for proof in ["wrong", verifier] {
+        let (_, headers, _) =
+            send(&app, form("/oauth/authorize", &format!("{consent}&decision=allow"), Some(&owner))).await;
+        let url = reqwest::Url::parse(headers[header::LOCATION].to_str().unwrap()).unwrap();
+        let code = url.query_pairs().find(|(k, _)| k == "code").unwrap().1;
+        let data = format!("redirect_uri={callback}&code={code}&code_verifier={proof}");
+        let (status, h, _) = send(&app, form("/mobile/sign-in/complete", &data, None)).await;
+        if proof == verifier {
+            assert_eq!(status, StatusCode::SEE_OTHER);
+            assert_eq!(send(&app, get("/sources", Some(&session_cookie(&h)))).await.0, StatusCode::OK);
+        } else {
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+        }
+        assert_eq!(send(&app, form("/mobile/sign-in/complete", &data, None)).await.0, StatusCode::UNAUTHORIZED);
+    }
+}
+
+#[cfg(feature = "auth")]
+#[sqlx::test(migrations = "../migrations")]
+async fn native_provider_callback_returns_to_android_without_consuming_the_flow(pool: PgPool) {
+    let app = app(pool);
+    let state = format!("android-{}", "0".repeat(64));
+    let path = format!("/health/cloud/withings/callback?state={state}&code=fixture");
+    let (status, headers, body) = send(&app, get(&path, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
+    assert!(body.contains("healthledger://provider-return/health/cloud/withings/callback"));
+    let mut native = get(&path, None);
+    native.headers_mut().insert("x-ledger-client", "android".parse().unwrap());
+    assert_eq!(send(&app, native).await.1[header::LOCATION], "/sign-in");
+}
+
 #[cfg(feature = "mcp")]
 #[sqlx::test(migrations = "../migrations")]
 async fn oauth_connects_an_agent_with_consent_and_rotating_tokens(pool: PgPool) {
@@ -2891,17 +2935,16 @@ async fn medication_courses_can_be_queried_for_a_day(pool: PgPool) {
 
 #[cfg(feature = "auth")]
 #[sqlx::test(migrations = "../migrations")]
-async fn renpho_connection_requires_owner_and_origin(pool: PgPool) {
+async fn scale_connections_require_owner_and_origin(pool: PgPool) {
     let (_, cookie) = settings_user(&pool, "scale-owner@example.test").await;
     let router = app(pool);
-    let path = "/health/renpho/connect";
     let body = "email=scale%40example.test&password=";
     let (anon_status, anon_headers, _) = send(&router, get("/sources", None)).await;
     assert_eq!(anon_status, StatusCode::SEE_OTHER);
     assert_eq!(anon_headers[header::LOCATION], "/sign-in");
     let (status, _, sources) = send(&router, get("/sources", Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(sources.contains(path));
+    assert!(sources.contains("id=\"source-picooc\""));
     assert!(sources.contains("signs you out"));
     assert!(sources.contains("Hevy"));
     assert!(sources.contains("id=\"direct-sync\"") && sources.contains("id=\"phone-exporters\""));
@@ -2909,11 +2952,19 @@ async fn renpho_connection_requires_owner_and_origin(pool: PgPool) {
     let (_, _, dashboard) = send(&router, get("/dashboard", Some(&cookie))).await;
     assert!(!dashboard.contains("Agent access"));
     assert!(!dashboard.contains("href=\"#sources\""));
-    let mut cross_origin = form(path, body, Some(&cookie));
-    cross_origin.headers_mut().insert(header::ORIGIN, "https://other.example".parse().unwrap());
-    assert_eq!(send(&router, cross_origin).await.0, StatusCode::FORBIDDEN);
-    assert_eq!(send(&router, form(path, body, Some(&cookie))).await.0, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_ne!(send(&router, form(path, body, None)).await.0, StatusCode::UNPROCESSABLE_ENTITY);
+    for path in ["/health/picooc/connect", "/health/renpho/connect"] {
+        assert!(sources.contains(path));
+        let mut missing_origin = form(path, body, Some(&cookie));
+        missing_origin.headers_mut().remove(header::ORIGIN);
+        assert_eq!(send(&router, missing_origin).await.0, StatusCode::FORBIDDEN);
+        let mut cross_origin = form(path, body, Some(&cookie));
+        cross_origin.headers_mut().insert(header::ORIGIN, "https://other.example".parse().unwrap());
+        assert_eq!(send(&router, cross_origin).await.0, StatusCode::FORBIDDEN);
+        let (status, _, error_page) = send(&router, form(path, body, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(error_page.contains("role=\"alert\"") && error_page.contains("value=\"scale@example.test\""));
+        assert_ne!(send(&router, form(path, body, None)).await.0, StatusCode::UNPROCESSABLE_ENTITY);
+    }
 }
 
 #[cfg(feature = "auth")]
