@@ -2,6 +2,10 @@
 
 /// A divisor of 60,000 converts Samsung's milliseconds to the chart's minutes.
 pub(super) fn measurement<'a>(source: &str, title: &'a str, unit: &'a str) -> Option<(&'a str, &'a str, i32)> {
+    // RENPHO omits the standard BMI unit from its scale export.
+    if source == "RENPHO" && title.eq_ignore_ascii_case("BMI") && unit.is_empty() {
+        return Some(("BMI", "kg/m²", 1));
+    }
     if source == "Samsung Health" && unit.is_empty() {
         let raw = match title {
             "step_count" => ("Steps", "steps", 1),
@@ -96,7 +100,7 @@ fn known_measurement<'a>(title: &'a str, unit: &'a str) -> (&'a str, &'a str, i3
         ("lean body mass", "kg") => "Lean body mass",
         ("fat free weight", "kg") => "Fat-free weight",
         ("bone mass", "%") => "Bone mass ratio",
-        ("body age", "years") => "Body age",
+        ("body age" | "metabolic age", "years") => "Body age",
         ("heart rate", "bpm") => "Heart rate",
         ("minimum heart rate", "bpm") => "Minimum heart rate",
         ("maximum heart rate", "bpm") => "Maximum heart rate",
@@ -117,8 +121,8 @@ fn known_measurement<'a>(title: &'a str, unit: &'a str) -> (&'a str, &'a str, i3
         ("daily floors climbed", "floors") => "Daily floors climbed",
         ("height", "cm") => "Height",
         ("sleep session", "min") => "Sleep session",
-        ("bmi", "") => "BMI",
-        ("bmr", "kcal/day") => "BMR",
+        ("bmi", "" | "kg/m²") => "BMI",
+        ("bmr" | "basal metabolic rate", "kcal/day") => "BMR",
         ("protein", "%") => "Protein",
         // Unknown user-defined metrics retain their title and unit. In particular,
         // weight without units outside a known source is not assumed to be kg.

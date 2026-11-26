@@ -21,7 +21,7 @@ func historyFixture(t *testing.T, replies ...string) (string, error) {
 	original := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = original })
 	calls := 0
-	http.DefaultTransport = &checkedTransport{remaining: 32 << 20, base: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	transport := &checkedTransport{remaining: 32 << 20, base: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if calls >= len(replies) {
 			t.Fatal("unexpected provider request")
 		}
@@ -38,8 +38,9 @@ func historyFixture(t *testing.T, replies ...string) (string, error) {
 		calls++
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(reply)), Header: make(http.Header)}, nil
 	})}
+	http.DefaultTransport = transport
 	var out bytes.Buffer
-	err := readHistory(strings.NewReader(`{"email":"a@example.test","password":"fixture"}`), &out)
+	err := readHistory(strings.NewReader(`{"email":"a@example.test","password":"fixture"}`), &out, transport)
 	if calls != len(replies) {
 		t.Fatalf("used %d of %d responses", calls, len(replies))
 	}
@@ -48,16 +49,17 @@ func historyFixture(t *testing.T, replies ...string) (string, error) {
 
 func TestPrimaryProfileHistory(t *testing.T) {
 	raw, err := historyFixture(t, primary,
-		`{"code":200,"resp":{"records":[{"role_id":11,"bodyTime":150,"weight":71.2,"body_fat":21}],"continue":true,"lastTime":100}}`,
+		`{"code":200,"resp":{"records":[{"role_id":11,"bodyTime":150,"weight":71.2,"body_fat":21,"muscle_race":65.2,"subcutaneous_fat":24.5,"electric_resistance":520,"correction_value_r":505}],"continue":true,"lastTime":100}}`,
 		`{"code":0,"resp":{"records":[{"bodyTime":99,"weight":70},{"bodyTime":98,"weight":81,"is_del":1},{"bodyTime":97,"weight":82,"abnormal_flag":1}]}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var rows []struct {
+		composition
 		Date            string
 		Weight, BodyFat float64
 	}
-	if json.Unmarshal([]byte(raw), &rows) != nil || len(rows) != 2 || rows[0].Weight != 71.2 || rows[0].BodyFat != 21 || rows[1].Weight != 70 {
+	if json.Unmarshal([]byte(raw), &rows) != nil || len(rows) != 2 || rows[0].Weight != 71.2 || rows[0].BodyFat != 21 || rows[1].Weight != 70 || rows[0].MuscleRatio != 65.2 || rows[0].SourceFat.String() != "24.5" || rows[0].Resistance.String() != "520" || rows[0].Correction.String() != "505" || rows[1].MuscleRatio != 0 {
 		t.Fatal("expected two valid primary profile readings")
 	}
 }
