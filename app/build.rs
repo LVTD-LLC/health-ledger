@@ -1,5 +1,6 @@
 fn main() {
     indexnow_revision();
+    println!("cargo:rerun-if-changed=queries");
     println!("cargo:rerun-if-changed=content/blog");
     println!("cargo:rerun-if-changed=content/docs");
 }

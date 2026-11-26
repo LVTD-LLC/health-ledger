@@ -1,16 +1,16 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT DISTINCT ON(title,unit) id,title,unit FROM health_records WHERE user_id=$1 AND kind IN ('Measurement','Lab','Sleep','Nutrition') AND value ~ '^[+-]?[0-9]+([.][0-9]+)?$' ORDER BY title,unit,occurred_at DESC,id DESC LIMIT 250",
+  "query": "SELECT source,title,unit FROM health_records WHERE user_id=$1 AND id=$2",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "id",
-        "type_info": "Uuid",
+        "name": "source",
+        "type_info": "Text",
         "origin": {
           "Table": {
             "table": "health_records",
-            "name": "id"
+            "name": "source"
           }
         }
       },
@@ -39,6 +39,7 @@
     ],
     "parameters": {
       "Left": [
+        "Uuid",
         "Uuid"
       ]
     },
@@ -48,5 +49,5 @@
       false
     ]
   },
-  "hash": "22c43a8743d87d5ae21972fb0a7980c2e95e26035a6bb8bb7d853ad137709640"
+  "hash": "1914528fd108b6e33a02eaf661ac7081d91896225d10336ae91e40090dfc20c1"
 }

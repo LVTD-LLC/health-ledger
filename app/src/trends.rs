@@ -1,4 +1,6 @@
 //! Plot numeric measurements over time and build cross-metric dashboard summaries.
+mod catalog;
+
 use crate::{AppError, SharedState};
 use app_auth::CurrentUser;
 use axum::extract::{Query, State};
@@ -6,8 +8,9 @@ use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use maud::{Markup, html};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use time::{Date, Duration, Month, OffsetDateTime};
 use uuid::Uuid;
 
@@ -68,6 +71,29 @@ struct MetricOption {
     id: Uuid,
     title: String,
     unit: String,
+    #[serde(skip)]
+    aliases: Aliases,
+}
+
+#[derive(Default, Clone)]
+struct Aliases {
+    titles: Vec<String>,
+    units: Vec<String>,
+    sources: Vec<String>,
+    divisors: Vec<i32>,
+}
+
+// Previous versions linked to a record UUID. Current links identify the series
+// across subsequent imports and deletion of individual readings.
+fn metric_id(owner: Uuid, title: &str, unit: &str) -> Uuid {
+    let mut hash = Sha256::new();
+    hash.update(owner.as_bytes());
+    hash.update(title.as_bytes());
+    hash.update([0]);
+    hash.update(unit.as_bytes());
+    let mut bytes = [0; 16];
+    bytes.copy_from_slice(&hash.finalize()[..16]);
+    uuid::Builder::from_custom_bytes(bytes).into_uuid()
 }
 
 struct MetricSeries {
@@ -84,21 +110,43 @@ pub struct Overview {
 }
 
 async fn metric_options(pool: &PgPool, owner: Uuid) -> Result<Vec<MetricOption>, sqlx::Error> {
-    let raw_options = sqlx::query!(
-        "SELECT DISTINCT ON(title,unit) id,title,unit FROM health_records WHERE user_id=$1 AND kind IN ('Measurement','Lab','Sleep','Nutrition') AND value ~ '^[+-]?[0-9]+([.][0-9]+)?$' ORDER BY title,unit,occurred_at DESC,id DESC LIMIT 250",
-        owner
-    )
-    .fetch_all(pool)
-    .await?;
-
-    Ok(raw_options.into_iter().map(|r| MetricOption { id: r.id, title: r.title, unit: r.unit }).collect())
+    let rows = sqlx::query_file!("queries/chart_sources.sql", owner).fetch_all(pool).await?;
+    let mut groups = BTreeMap::new();
+    for row in rows {
+        let Some((title, unit, divisor)) = catalog::measurement(&row.source, &row.title, &row.unit) else { continue };
+        let aliases = groups.entry((title.to_owned(), unit.to_owned())).or_insert_with(Aliases::default);
+        aliases.titles.push(row.title);
+        aliases.units.push(row.unit);
+        aliases.sources.push(row.source);
+        aliases.divisors.push(divisor);
+    }
+    Ok(groups
+        .into_iter()
+        .map(|((title, unit), aliases)| MetricOption { id: metric_id(owner, &title, &unit), title, unit, aliases })
+        .collect())
 }
 
-fn choose_metric(options: &[MetricOption], selected: Option<Uuid>) -> Option<&MetricOption> {
-    options
-        .iter()
-        .find(|o| Some(o.id) == selected)
-        .or_else(|| options.iter().min_by_key(|o| (metric_priority(&o.title), o.title.to_ascii_lowercase())))
+async fn choose_metric<'a>(
+    pool: &PgPool,
+    owner: Uuid,
+    options: &'a [MetricOption],
+    selected: Option<Uuid>,
+) -> Result<Option<&'a MetricOption>, sqlx::Error> {
+    if let Some(id) = selected {
+        if let Some(option) = options.iter().find(|o| o.id == id) {
+            return Ok(Some(option));
+        }
+        let old = sqlx::query!("SELECT source,title,unit FROM health_records WHERE user_id=$1 AND id=$2", owner, id)
+            .fetch_optional(pool)
+            .await?;
+        if let Some(old) = old
+            && let Some((title, unit, _)) = catalog::measurement(&old.source, &old.title, &old.unit)
+            && let Some(option) = options.iter().find(|o| o.title == title && o.unit == unit)
+        {
+            return Ok(Some(option));
+        }
+    }
+    Ok(options.iter().min_by_key(|o| (metric_priority(&o.title), o.title.to_ascii_lowercase())))
 }
 
 /// Aggregate the selected metric in UTC calendar buckets before transferring it to the phone.
@@ -108,7 +156,7 @@ pub async fn aggregates(
     Query(filter): Query<crate::health::Filter>,
 ) -> Result<Response, AppError> {
     let options = metric_options(&state.pool, user.id).await?;
-    let chosen = choose_metric(&options, filter.metric);
+    let chosen = choose_metric(&state.pool, user.id, &options, filter.metric).await?;
     let today = OffsetDateTime::now_utc().date();
     let days = match filter.range.as_str() {
         "7d" => Some(7),
@@ -121,22 +169,17 @@ pub async fn aggregates(
         let start = days.map(|n| (today - Duration::days(n - 1)).midnight().assume_utc());
         let until = (today + Duration::days(1)).midnight().assume_utc();
         let period = if days.is_some() { "day" } else { "month" };
-        let rows = sqlx::query!(
-            r#"SELECT date_trunc($4, occurred_at AT TIME ZONE 'UTC')::date AS "day!",
-                      count(*) AS "count!", avg(value::numeric)::text AS "mean!",
-                      min(value::numeric)::text AS "low!", max(value::numeric)::text AS "high!"
-               FROM health_records
-               WHERE user_id=$1 AND title=$2 AND unit=$3
-                 AND kind IN ('Measurement','Lab','Sleep','Nutrition')
-                 AND value ~ '^[+-]?[0-9]+([.][0-9]+)?$'
-                 AND ($5::timestamptz IS NULL OR occurred_at >= $5) AND occurred_at < $6
-               GROUP BY 1 ORDER BY 1"#,
+        let a = &metric.aliases;
+        let rows = sqlx::query_file!(
+            "queries/chart_buckets.sql",
             user.id,
-            metric.title,
-            metric.unit,
+            &a.titles,
+            &a.units,
+            &a.sources,
+            &a.divisors,
             period,
             start,
-            until,
+            until
         )
         .fetch_all(&state.pool)
         .await?;
@@ -159,7 +202,7 @@ pub async fn overview(
 ) -> Result<Overview, sqlx::Error> {
     let options = metric_options(pool, owner).await?;
 
-    let Some(chosen) = choose_metric(&options, selected).cloned() else {
+    let Some(chosen) = choose_metric(pool, owner, &options, selected).await?.cloned() else {
         return Ok(Overview { total_metrics: 0, latest_date: None, chart: html! {}, metrics_grid: html! {} });
     };
 
@@ -187,7 +230,7 @@ pub async fn overview(
 
     let mut series_list: Vec<MetricSeries> = Vec::with_capacity(featured.len());
     for opt in featured {
-        let points = fetch_points(pool, owner, &opt.title, &opt.unit).await?;
+        let points = fetch_points(pool, owner, &opt.aliases).await?;
         if !points.is_empty() {
             series_list.push(MetricSeries { option: opt, points });
         }
@@ -210,24 +253,19 @@ pub async fn overview(
 async fn fetch_points(
     pool: &PgPool,
     owner: Uuid,
-    title: &str,
-    unit: &str,
+    aliases: &Aliases,
 ) -> Result<Vec<(OffsetDateTime, f64)>, sqlx::Error> {
-    let rows = sqlx::query!(
-        "SELECT occurred_at,value FROM health_records WHERE user_id=$1 AND title=$2 AND unit=$3 AND kind IN ('Measurement','Lab','Sleep','Nutrition') AND value ~ '^[+-]?[0-9]+([.][0-9]+)?$' ORDER BY occurred_at DESC,id DESC LIMIT 90",
+    let rows = sqlx::query_file!(
+        "queries/chart_points.sql",
         owner,
-        title,
-        unit
+        &aliases.titles,
+        &aliases.units,
+        &aliases.sources,
+        &aliases.divisors
     )
     .fetch_all(pool)
     .await?;
-
-    Ok(rows
-        .iter()
-        .rev()
-        .filter_map(|r| Some((r.occurred_at, r.value.parse::<f64>().ok()?)))
-        .filter(|(_, n)| n.is_finite())
-        .collect())
+    Ok(rows.into_iter().rev().map(|r| (r.occurred_at, r.value)).collect())
 }
 
 /// Lower score = surfaced higher in the summary grid.
@@ -309,7 +347,7 @@ fn render_trend_card(options: &[MetricOption], series: &MetricSeries, range: Ran
                             @for o in options {
                                 option value=(o.id) selected[o.id == metric.id] {
                                     (o.title)
-                                    @if !o.unit.is_empty() { " (" (o.unit) ")" }
+                                    @if !o.unit.is_empty() && !o.title.eq_ignore_ascii_case(&o.unit) { " (" (o.unit) ")" }
                                 }
                             }
                         }
@@ -329,6 +367,11 @@ fn render_trend_card(options: &[MetricOption], series: &MetricSeries, range: Ran
                     }
                 }
             }
+
+            @if metric.unit == "steps" { p class="muted small" {
+                "Each reading is a reported step count and may cover an interval or a full day."
+                @if cfg!(feature = "docs") { " " a href="/docs/measurement-names" { "How measurements are grouped" } }
+            } }
 
             @if let Some(st) = &stats {
                 div class="trend-kpis" {
@@ -979,7 +1022,8 @@ mod tests {
 
     #[test]
     fn chart_svg_renders_axes_grid_area_and_interactive_points() {
-        let metric = MetricOption { id: Uuid::nil(), title: "Weight".into(), unit: "kg".into() };
+        let metric =
+            MetricOption { id: Uuid::nil(), title: "Weight".into(), unit: "kg".into(), aliases: Aliases::default() };
         let points = vec![
             (datetime!(2026-05-29 08:00 UTC), 81.4),
             (datetime!(2026-08-15 08:00 UTC), 80.35),
@@ -1000,7 +1044,8 @@ mod tests {
 
     #[test]
     fn single_point_chart_renders_cleanly_without_nan() {
-        let metric = MetricOption { id: Uuid::nil(), title: "Weight".into(), unit: "kg".into() };
+        let metric =
+            MetricOption { id: Uuid::nil(), title: "Weight".into(), unit: "kg".into(), aliases: Aliases::default() };
         let points = vec![(datetime!(2026-11-21 08:00 UTC), 84.55)];
         let stats = compute_stats(&points);
         let markup = render_chart_svg(&metric, &points, &stats).into_string();

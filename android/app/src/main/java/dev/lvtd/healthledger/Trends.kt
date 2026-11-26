@@ -37,7 +37,7 @@ internal fun decodeTrends(json: String): TrendSeries {
         val id = m.getString("id")
         if (id == selected) selectedUnit = unit
         val title = m.getString("title")
-        TrendMetric(id, if (unit.isBlank()) title else "$title ($unit)")
+        TrendMetric(id, if (unit.isBlank() || title.equals(unit, ignoreCase = true)) title else "$title ($unit)")
     }
     val rows = data.getJSONArray("buckets")
     val buckets = List(rows.length()) { i ->

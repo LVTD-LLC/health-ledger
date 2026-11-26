@@ -1,0 +1,39 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.occurred_at AS \"occurred_at!\", (p.value::double precision / a.divisor) AS \"value!\"\nFROM unnest($2::text[], $3::text[], $4::text[], $5::integer[]) a(title, unit, source, divisor)\nCROSS JOIN LATERAL (\n    SELECT occurred_at, id, value FROM health_records r\n    WHERE user_id = $1 AND r.title = a.title AND r.unit = a.unit AND r.source = a.source\n      AND kind IN ('Measurement','Lab','Sleep','Nutrition')\n      AND value ~ '^[+-]?[0-9]+([.][0-9]+)?$'\n    ORDER BY occurred_at DESC, id DESC LIMIT 90\n) p\nORDER BY p.occurred_at DESC, p.id DESC LIMIT 90\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "occurred_at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "health_records",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "value!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "Int4Array"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "89d3e743e3a436b1b2be87a3ec087643fffaff0d8f33ae3003f016667266fad0"
+}
