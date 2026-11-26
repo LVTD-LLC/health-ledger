@@ -38,6 +38,20 @@ class NativeScreensTest {
         fail("Missing native control: $text")
     }
 
+    @Test fun passwordFieldsMaskTypedText() {
+        ActivityScenario.launch(ServerActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val ui = MobileUi(activity)
+                val parent = ui.column()
+                val form = org.jsoup.Jsoup.parse("<form><input name='password' type='password'></form>").selectFirst("form")!!
+                NativeForm(activity, ui, form, parent) { _, _, _ -> }
+                val password = children(parent).filterIsInstance<EditText>().single()
+                assertTrue(password.transformationMethod is android.text.method.PasswordTransformationMethod)
+                assertTrue(password.createAccessibilityNodeInfo().isPassword)
+            }
+        }
+    }
+
     @Test fun formsAndCredentialsStayOnSelectedOrigin() {
         val origin="https://journal.example:8443"
         assertEquals("/settings?saved=name",localPath(origin,"/settings","/settings?saved=name"))
