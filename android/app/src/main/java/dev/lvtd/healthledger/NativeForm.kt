@@ -65,13 +65,15 @@ internal class NativeForm(private val activity: Activity, private val ui: Mobile
                 else -> {
                     val edit = EditText(activity).apply {
                         this.id=id; isSaveEnabled=false
+                        setSingleLine(control.normalName() != "textarea")
                         inputType=when {
                             type=="password" -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
                             type=="email" -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
                             control.attr("inputmode")=="numeric" || type=="number" -> InputType.TYPE_CLASS_NUMBER
+                            control.normalName() == "textarea" -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
                             else -> InputType.TYPE_CLASS_TEXT
                         }
-                        setSingleLine(control.normalName()!="textarea"); hint=control.attr("placeholder")
+                        hint=control.attr("placeholder")
                         control.attr("maxlength").toIntOrNull()?.let { filters=arrayOf(InputFilter.LengthFilter(it)) }
                         if(type!="password") setText(if(control.normalName()=="textarea") control.text() else value)
                     }
