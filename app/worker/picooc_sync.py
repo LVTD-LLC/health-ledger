@@ -15,7 +15,19 @@ METRICS = {
     "VisceralFat": ("Visceral fat", "level"),
     "MetabolicAge": ("Metabolic age", "years"),
     "BasalMetabolism": ("Basal metabolic rate", "kcal/day"),
-    "SkeletalMuscleMass": ("Skeletal muscle mass", "kg"),
+    # PICOOC supplies both muscle fields as percentages. Keep the existing
+    # SkeletalMuscleMass identity so the backfill corrects rows in place.
+    "SkeletalMuscleMass": ("Skeletal muscle ratio", "%"),
+    "muscle_race": ("Muscle mass ratio", "%"),
+}
+
+
+# Preserve device diagnostics without interpreting them as chart measurements.
+# PICOOC's international app can store an intermediate fat estimate under
+# "subcutaneous_fat"; it does not establish an independent fat percentage.
+SOURCE_DETAILS = {
+    "Weight": ("electric_resistance", "correction_value_r"),
+    "BodyFat": ("subcutaneous_fat",),
 }
 
 
@@ -34,12 +46,18 @@ def measurements(account, samples):
                 or value <= 0
             ):
                 continue
+            note = "\n".join(
+                f"PICOOC {field}: {sample[field]}"
+                for field in SOURCE_DETAILS.get(key, ())
+                if field in sample
+            )
             yield record(
                 when,
                 "Measurement",
                 name,
                 value,
                 unit,
+                note=note,
                 source="PICOOC",
                 identity=[account, sample.get("Source", ""), when.isoformat(), key],
             )

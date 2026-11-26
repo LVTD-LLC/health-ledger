@@ -64,6 +64,8 @@ The worker exchanges the encrypted password for a session and uses that session 
 
 The PICOOC connection uses the international service through the [SmartScaleConnect client](https://github.com/AlexxIT/SmartScaleConnect/tree/v0.4.2/pkg/picooc). Use the email and password for the account whose **primary profile** you want to import. Family profiles on the same scale are excluded. Look under **Sources → PICOOC smart scale** for the result of the first sync, then open Trends to see weight and available body composition measurements.
 
+Trends groups equivalent readings across scales. PICOOC bone mass is measured in kilograms, and its total muscle and skeletal muscle readings are separate percentages. The journal notes retain raw resistance, resistance correction and the provider’s auxiliary fat field when available.
+
 The worker signs in for each refresh, so your server keeps the credentials encrypted with `HEALTH_CONNECTION_KEY`. Repeated readings update the same journal entries. If PICOOC rejects sign-in, the worker clears the credentials and asks you to reconnect. Disconnecting stops future syncs and keeps the readings already in your journal.
 
 Docker includes the client. For a native worker, install the helper on its PATH with Go 1.24 or later by running `(cd app/worker/picooc && go build -mod=readonly -o /your/bin/health-ledger-picooc .)`, replacing `/your/bin` with a directory on the worker’s PATH.

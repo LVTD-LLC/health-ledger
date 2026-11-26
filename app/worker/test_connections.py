@@ -104,7 +104,10 @@ class ConnectionTests(TestCase):
         sample = {
             "Date": "2019-07-01T07:30:00+02:00",
             "Weight": 71.8,
-            "BodyFat": 0,
+            "BodyFat": 19,
+            "SkeletalMuscleMass": 35.7,
+            "subcutaneous_fat": 21,
+            "electric_resistance": 510,
             "BodyWater": 55,
             "Source": "test-scale",
         }
@@ -119,16 +122,27 @@ class ConnectionTests(TestCase):
             (self.owner,),
         )
         self.assertEqual(self.cur.fetchone()[0].total_seconds(), 21600)
+        self.cur.execute(
+            "UPDATE health_records SET title='Skeletal muscle mass',unit='kg' WHERE user_id=%s AND title='Skeletal muscle ratio'",
+            (self.owner,),
+        )
         result.stdout = json.dumps(
-            [{**sample, "Weight": 72, "Date": "2019-07-01T05:30:00Z"}]
+            [{**sample, "Weight": 72, "muscle_race": 64.2, "Date": "2019-07-01T05:30:00Z"}]
         ).encode()
         self.tick()
         self.cur.execute(
-            "SELECT title,value,unit FROM health_records WHERE user_id=%s AND source='PICOOC' ORDER BY title",
+            "SELECT title,value,unit,note FROM health_records WHERE user_id=%s AND source='PICOOC' ORDER BY title",
             (self.owner,),
         )
         self.assertEqual(
-            self.cur.fetchall(), [("Body water", "55", "%"), ("Weight", "72", "kg")]
+            self.cur.fetchall(),
+            [
+                ("Body fat", "19", "%", "PICOOC subcutaneous_fat: 21"),
+                ("Body water", "55", "%", ""),
+                ("Muscle mass ratio", "64.2", "%", ""),
+                ("Skeletal muscle ratio", "35.7", "%", ""),
+                ("Weight", "72", "kg", "PICOOC electric_resistance: 510"),
+            ]
         )
         self.assertEqual(run.call_args.args, (["health-ledger-picooc"],))
         self.assertEqual(json.loads(run.call_args.kwargs["input"]), self.state()[0])

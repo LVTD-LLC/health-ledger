@@ -136,6 +136,12 @@ async fn choose_metric<'a>(
         if let Some(option) = options.iter().find(|o| o.id == id) {
             return Ok(Some(option));
         }
+        // A saved chart selection may still use a source's old title and unit.
+        if let Some(option) = options.iter().find(|o| {
+            o.aliases.titles.iter().zip(&o.aliases.units).any(|(title, unit)| metric_id(owner, title, unit) == id)
+        }) {
+            return Ok(Some(option));
+        }
         let old = sqlx::query!("SELECT source,title,unit FROM health_records WHERE user_id=$1 AND id=$2", owner, id)
             .fetch_optional(pool)
             .await?;

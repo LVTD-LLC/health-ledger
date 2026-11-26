@@ -11,11 +11,34 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/AlexxIT/SmartScaleConnect/pkg/core"
 	"github.com/AlexxIT/SmartScaleConnect/pkg/picooc"
 )
 
 var denied = errors.New("sign-in rejected")
 var invalid = errors.New("unexpected PICOOC response")
+
+// SmartScaleConnect omits these source fields from its normalized weights.
+type composition struct {
+	MuscleRatio float32     `json:"muscle_race,omitempty"`
+	SourceFat   json.Number `json:"subcutaneous_fat,omitempty"`
+	Resistance  json.Number `json:"electric_resistance,omitempty"`
+	Correction  json.Number `json:"correction_value_r,omitempty"`
+}
+
+type recordDetails struct {
+	composition
+	Role     json.Number `json:"role_id"`
+	Time     int64       `json:"bodyTime"`
+	Source   string      `json:"mac"`
+	Deleted  int         `json:"is_del"`
+	Abnormal int         `json:"abnormal_flag"`
+}
+
+type reading struct {
+	*core.Weight
+	composition
+}
 
 // The upstream client decodes history without checking the provider status.
 // Check it before letting an error response look like a successful empty import.
@@ -23,6 +46,7 @@ type checkedTransport struct {
 	base      http.RoundTripper
 	remaining int64
 	profile   string
+	details   []recordDetails
 }
 
 func (t *checkedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -52,11 +76,9 @@ func (t *checkedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	var result struct {
 		Code *int
 		Resp struct {
-			UserID  string `json:"user_id"`
-			RoleID  string `json:"role_id"`
-			Records *[]struct {
-				Role json.Number `json:"role_id"`
-			}
+			UserID   string `json:"user_id"`
+			RoleID   string `json:"role_id"`
+			Records  *[]recordDetails
 			Continue bool
 			LastTime int64
 		}
@@ -83,6 +105,9 @@ func (t *checkedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 			if record.Role != "" && record.Role.String() != t.profile {
 				return nil, invalid
 			}
+			if record.Deleted == 0 && record.Abnormal == 0 {
+				t.details = append(t.details, record)
+			}
 		}
 		if result.Resp.Continue {
 			before, err := strconv.ParseInt(r.URL.Query().Get("time"), 10, 64)
@@ -95,7 +120,7 @@ func (t *checkedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-func readHistory(in io.Reader, out io.Writer) error {
+func readHistory(in io.Reader, out io.Writer, transport *checkedTransport) error {
 	var account struct{ Email, Password string }
 	if err := json.NewDecoder(io.LimitReader(in, 16<<10)).Decode(&account); err != nil || account.Email == "" || account.Password == "" {
 		return invalid
@@ -108,12 +133,24 @@ func readHistory(in io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(out).Encode(weights)
+	if len(weights) != len(transport.details) {
+		return invalid
+	}
+	readings := make([]reading, 0, len(weights))
+	for i, weight := range weights {
+		extra := transport.details[i]
+		if extra.Time != weight.Date.Unix() || extra.Source != weight.Source {
+			return invalid
+		}
+		readings = append(readings, reading{weight, extra.composition})
+	}
+	return json.NewEncoder(out).Encode(readings)
 }
 
 func main() {
-	http.DefaultTransport = &checkedTransport{base: http.DefaultTransport, remaining: 32 << 20}
-	if err := readHistory(os.Stdin, os.Stdout); err != nil {
+	transport := &checkedTransport{base: http.DefaultTransport, remaining: 32 << 20}
+	http.DefaultTransport = transport
+	if err := readHistory(os.Stdin, os.Stdout, transport); err != nil {
 		if errors.Is(err, denied) {
 			os.Exit(2)
 		}

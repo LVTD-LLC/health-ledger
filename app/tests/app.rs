@@ -3197,6 +3197,12 @@ async fn dashboard_and_phone_share_canonical_metrics_and_keep_raw_history(pool: 
         ("Samsung Health", "version_code", "", "12"),
         ("Samsung Health", "count", "", "22"),
         ("My meter", "count", "", "2"),
+        ("RENPHO", "BMI", "", "20"),
+        ("PICOOC", "BMI", "kg/m²", "22"),
+        ("RENPHO", "Body Age", "years", "34"),
+        ("PICOOC", "Metabolic age", "years", "36"),
+        ("RENPHO", "BMR", "kcal/day", "1500"),
+        ("PICOOC", "Basal metabolic rate", "kcal/day", "1600"),
     ] {
         let row = sqlx::query!(
             "INSERT INTO health_records(user_id,kind,title,unit,value,source,occurred_at) VALUES($1,'Measurement',$2,$3,$4,$5,'2025-01-02 12:00+00') RETURNING id",
@@ -3217,7 +3223,7 @@ async fn dashboard_and_phone_share_canonical_metrics_and_keep_raw_history(pool: 
     };
     let series = fetch(legacy.to_string()).await;
     let options = series["metrics"].as_array().unwrap();
-    assert_eq!(options.len(), 9);
+    assert_eq!(options.len(), 12);
     for (title, unit, count, mean) in [
         ("Body fat", "%", 3, 18.),
         ("Body fat", "kg", 1, 11.),
@@ -3228,6 +3234,9 @@ async fn dashboard_and_phone_share_canonical_metrics_and_keep_raw_history(pool: 
         ("Walking steps", "steps", 1, 86.),
         ("Daily walking time", "min", 2, 3.),
         ("count", "", 1, 2.),
+        ("BMI", "kg/m²", 2, 21.),
+        ("Body age", "years", 2, 35.),
+        ("BMR", "kcal/day", 2, 1550.),
     ] {
         let option = options.iter().find(|o| o["title"] == title && o["unit"] == unit).unwrap();
         let id = option["id"].as_str().unwrap();
