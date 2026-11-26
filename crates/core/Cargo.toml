@@ -16,7 +16,7 @@ og = ["dep:tiny-skia", "dep:skrifa", "dep:harfrust"]
 
 [dependencies]
 # HTML parsing and Markdown serialization happen only during public-route setup.
-htmd = "0.5.5"
+htmd = "0.6.0"
 anyhow.workspace = true
 axum.workspace = true
 sqlx.workspace = true
