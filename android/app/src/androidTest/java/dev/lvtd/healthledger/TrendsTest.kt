@@ -72,6 +72,14 @@ class TrendsTest {
         assertNull(empty.mean)
     }
 
+    @Test fun displaysTheCanonicalNamesReturnedByItsServer() {
+        val json = """{"metrics":[{"id":"a","title":"Steps","unit":"steps"},{"id":"b","title":"Body fat","unit":"%"}],
+            "selected":"a","today":"2026-05-10","buckets":[]}"""
+        val series = decodeTrends(json)
+        assertEquals(listOf("Steps", "Body fat (%)"), series.metrics.map { it.label })
+        assertEquals("steps", series.unit)
+    }
+
     @Test fun decodesFullServerAggregatesWithoutTheLegacyReadingLimit() {
         val json = """{"metrics":[{"id":"a","title":"Weight","unit":"kg"}],"selected":"a","today":"2026-05-10",
             "buckets":[{"date":"2026-05-01","count":200,"mean":"71.56","low":"70","high":"73.2"}]}"""

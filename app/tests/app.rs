@@ -408,7 +408,7 @@ async fn assets_are_immutable(pool: PgPool) {
 async fn embedded_migrator_is_this_projects_schema(pool: PgPool) {
     app::MIGRATOR.run(&pool).await.unwrap();
     let latest = app::MIGRATOR.iter().map(|m| m.version).max();
-    assert_eq!(latest, Some(20), "expected migrations 0001..0020");
+    assert_eq!(latest, Some(21), "expected migrations 0001..0021");
     sqlx::query("SELECT id FROM sessions LIMIT 0").execute(&pool).await.unwrap();
     sqlx::query("SELECT id, redirect_uris FROM oauth_clients LIMIT 0").execute(&pool).await.unwrap();
     sqlx::query("SELECT code_hash, code_challenge FROM oauth_codes LIMIT 0").execute(&pool).await.unwrap();
@@ -2876,7 +2876,14 @@ async fn medication_courses_can_be_queried_for_a_day(pool: PgPool) {
     );
     for (date, count) in [("2026-01-01", 0), ("2026-01-02", 1), ("2026-02-01", 1), ("2026-02-02", 0)] {
         assert_eq!(
-            app::regimens::list(&pool, u.id, Some(app::regimens::date(date).unwrap())).await.unwrap().len(),
+            app::regimens::list(
+                &pool,
+                u.id,
+                Some(app::regimens::date(date).unwrap_or_else(|_| panic!("invalid fixture date {date}")))
+            )
+            .await
+            .unwrap()
+            .len(),
             count
         );
     }
@@ -3111,4 +3118,89 @@ async fn android_discovers_configured_server_and_imports_only_missing_days(pool:
     ] {
         assert_eq!(send(&router, post(&cookie, origin, &invalid)).await.0, StatusCode::UNPROCESSABLE_ENTITY);
     }
+}
+
+#[cfg(feature = "auth")]
+#[sqlx::test(migrations = "../migrations")]
+async fn dashboard_and_phone_share_canonical_metrics_and_keep_raw_history(pool: PgPool) {
+    let (account, cookie) = settings_user(&pool, "catalog-owner@example.test").await;
+    let (_, other) = settings_user(&pool, "catalog-other@example.test").await;
+    let router = app(pool.clone());
+    let mut legacy = uuid::Uuid::nil();
+    for (source, title, unit, value) in [
+        ("RENPHO", "Body Fat", "%", "15"),
+        ("Samsung Health", "body_fat", "", "18"),
+        ("Samsung Health", "Body fat", "%", "21"),
+        ("Other scale", "Body fat", "kg", "11"),
+        ("Manual", "body_fat", "", "7"),
+        ("Samsung Health", "weight", "", "71"),
+        ("Another scale", "Weight", "kg", "73"),
+        ("Samsung Health", "step_count", "", "120"),
+        ("Samsung Health", "Daily steps", "steps", "200"),
+        ("Android phone", "Steps", "steps", "100"),
+        ("Samsung Health", "run_step", "", "5"),
+        ("Samsung Health", "run_step_count", "", "13"),
+        ("Samsung Health", "walk_step_count", "", "86"),
+        ("Samsung Health", "walk_time", "", "120000"),
+        ("Samsung Health", "Daily walking time", "min", "4"),
+        ("Samsung Health", "version_code", "", "12"),
+        ("Samsung Health", "count", "", "22"),
+        ("My meter", "count", "", "2"),
+    ] {
+        let row = sqlx::query!(
+            "INSERT INTO health_records(user_id,kind,title,unit,value,source,occurred_at) VALUES($1,'Measurement',$2,$3,$4,$5,'2025-01-02 12:00+00') RETURNING id",
+            account.id, title, unit, value, source
+        ).fetch_one(&pool).await.unwrap();
+        if title == "body_fat" && source == "Samsung Health" {
+            legacy = row.id;
+        }
+    }
+    let fetch = |id: String| {
+        let router = &router;
+        let cookie = &cookie;
+        async move {
+            let (_, _, body) =
+                send(router, get(&format!("/health/trends.json?range=all&metric={id}"), Some(cookie))).await;
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()
+        }
+    };
+    let series = fetch(legacy.to_string()).await;
+    let options = series["metrics"].as_array().unwrap();
+    assert_eq!(options.len(), 9);
+    for (title, unit, count, mean) in [
+        ("Body fat", "%", 3, 18.),
+        ("Body fat", "kg", 1, 11.),
+        ("body_fat", "", 1, 7.),
+        ("Weight", "kg", 2, 72.),
+        ("Steps", "steps", 3, 140.),
+        ("Running steps", "steps", 2, 9.),
+        ("Walking steps", "steps", 1, 86.),
+        ("Daily walking time", "min", 2, 3.),
+        ("count", "", 1, 2.),
+    ] {
+        let option = options.iter().find(|o| o["title"] == title && o["unit"] == unit).unwrap();
+        let id = option["id"].as_str().unwrap();
+        if unit == "%" {
+            assert_eq!(series["selected"], id);
+        }
+        let chart = fetch(id.to_owned()).await;
+        assert_eq!(chart["selected"], id);
+        let bucket = &chart["buckets"][0];
+        assert_eq!(bucket["count"], count);
+        assert_eq!(bucket["mean"].as_str().unwrap().parse::<f64>().unwrap(), mean);
+    }
+    let (status, _, web) = send(&router, get(&format!("/dashboard?metric={legacy}"), Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK);
+    let picker = web.split_once("id=\"metric-select\"").unwrap().1.split_once("</select>").unwrap().0;
+    assert_eq!(picker.matches(">Body fat (%)</option>").count(), 1);
+    assert!(picker.contains(">Steps</option>") && !picker.contains("version_code"));
+    let (_, _, raw) = send(&router, get("/health/timeline.json?q=version_code", Some(&cookie))).await;
+    assert!(raw.contains("version_code"));
+    let (_, _, peer) = send(&router, get(&format!("/health/trends.json?metric={legacy}"), Some(&other))).await;
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&peer).unwrap()["metrics"], serde_json::json!([]));
+
+    let stable = series["selected"].as_str().unwrap().to_owned();
+    let form_data = "kind=Measurement&title=Body+fat&value=26&unit=%25&note=&at=2026-01-02T12%3A00%3A00Z";
+    assert_eq!(send(&router, form("/health/records", form_data, Some(&cookie))).await.0, StatusCode::SEE_OTHER);
+    assert_eq!(fetch(stable.clone()).await["selected"], stable);
 }

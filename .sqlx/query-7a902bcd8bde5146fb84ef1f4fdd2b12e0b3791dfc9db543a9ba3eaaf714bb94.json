@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH readings AS (\n    SELECT r.occurred_at, r.value::numeric / a.divisor AS n\n    FROM unnest($2::text[], $3::text[], $4::text[], $5::integer[]) a(title, unit, source, divisor)\n    JOIN health_records r ON r.title = a.title AND r.unit = a.unit AND r.source = a.source\n    WHERE r.user_id = $1 AND r.kind IN ('Measurement','Lab','Sleep','Nutrition')\n      AND r.value ~ '^[+-]?[0-9]+([.][0-9]+)?$'\n      AND ($7::timestamptz IS NULL OR r.occurred_at >= $7) AND r.occurred_at < $8\n)\nSELECT date_trunc($6, occurred_at AT TIME ZONE 'UTC')::date AS \"day!\",\n       count(*) AS \"count!\", avg(n)::text AS \"mean!\",\n       trim_scale(min(n))::text AS \"low!\", trim_scale(max(n))::text AS \"high!\"\nFROM readings GROUP BY 1 ORDER BY 1\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "day!",
+        "type_info": "Date",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "mean!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "low!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "high!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "Int4Array",
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "7a902bcd8bde5146fb84ef1f4fdd2b12e0b3791dfc9db543a9ba3eaaf714bb94"
+}

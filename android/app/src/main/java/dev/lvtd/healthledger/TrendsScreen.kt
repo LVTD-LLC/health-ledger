@@ -143,6 +143,7 @@ internal class TrendsScreen(
                 "Low, average and high by $bucketUnit")
             ChartMode.Count -> Triple("Total readings", series.count.toString(), "Readings by $bucketUnit")
         }
+        if (series.unit == "steps") ui.paragraph(body, "Each reading is a reported step count and may cover an interval or a full day.")
         body.addView(ui.text(caption, 15, color = ui.muted).apply { setPadding(0, ui.dp(22), 0, 0) })
         body.addView(ui.text(headline, 36, true))
         body.addView(ui.text(chartTitle, 15, true).apply { setPadding(0, ui.dp(24), 0, ui.dp(12)) })
