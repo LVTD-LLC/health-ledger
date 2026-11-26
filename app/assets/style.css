@@ -932,10 +932,16 @@ img.account-avatar { object-fit: cover; }
   user-select: all;
 }
 
-.exporter-reveal { padding: 24px; max-width: 680px; }
+.samsung-sync { border-top: 1px solid var(--border); padding-top: 14px; }
+.samsung-sync summary { cursor: pointer; font-weight: 600; }
+.samsung-sync ol { padding-inline-start: 22px; }
+.samsung-sync li + li, .samsung-sync form { margin-top: 8px; }
+.samsung-sync a, .exporter-reveal > a { color: var(--accent); text-decoration: underline; }
+.exporter-reveal { padding: 24px; max-width: 680px; min-width: 0; }
+.exporter-reveal > p, .exporter-reveal button { margin-top: 8px; }
 .exporter-dl { margin: 0; display: grid; gap: 14px; }
 .exporter-dl dt { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-muted); }
-.exporter-dl dd { margin: 4px 0 0; }
+.exporter-dl dd { min-width: 0; margin: 4px 0 0; }
 
 @media (max-width: 900px) {
   .summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }

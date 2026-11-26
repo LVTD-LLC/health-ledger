@@ -20,6 +20,21 @@
     }
   }
 
+  for (const button of document.querySelectorAll('button[data-copy]')) {
+    const value = document.getElementById(button.dataset.copy);
+    const status = document.getElementById('copy-status');
+    if (!value || !status || !navigator.clipboard?.writeText) continue;
+    button.hidden = false;
+    button.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(value.textContent);
+        status.textContent = value.id === 'export-url' ? 'URL copied.' : 'Header copied.';
+      } catch {
+        status.textContent = 'Select the text above and copy it manually.';
+      }
+    });
+  }
+
   // Tabbed journal sections with #trend mapped cleanly into #overview.
   const ledger = document.querySelector('.ledger');
   const nav = document.querySelector('.ledger-nav');

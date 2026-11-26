@@ -45,53 +45,22 @@ pub fn about() -> Markup {
     }
 }
 
-pub fn contact() -> Markup {
+pub fn contact(operator_email: Option<&str>) -> Markup {
     html! {
         section class="page legal" {
             h1 { "Contact " (SITE_NAME) }
             div class="prose" {
-                p {
-                    (SITE_NAME) " is run by " (COMPANY) " in " (LOCATION) ". The best way to reach us is email: "
-                    (email_link()) ". A real person reads every message, and we aim to reply within "
-                    "a few business days."
+                h2 { "Your server operator" }
+                @if let Some(email) = operator_email {
+                    p { "For help with this instance, email " a href={ "mailto:" (email) } { (email) } "." }
+                } @else {
+                    p { "Contact the person who gave you this server address. If you set it up yourself, you manage the instance." }
                 }
-                h2 { "What to email us about" }
-                ul {
-                    li {
-                        strong { "Questions. " }
-                        "Whether " (SITE_NAME) " fits what you need, how it works, or anything the site does not answer."
-                    }
-                    @if cfg!(feature = "auth") {
-                        li {
-                            strong { "Account help. " }
-                            "Trouble signing in, verifying your email or using a feature. Write from the address on your "
-                            "account so we can find it quickly."
-                        }
-                    }
-                    @if cfg!(feature = "stripe") {
-                        li {
-                            strong { "Billing and refunds. " }
-                            "Questions about a charge, an invoice or a refund. You can manage or cancel your plan yourself "
-                            "from the billing page."
-                        }
-                    }
-                    li {
-                        strong { "Privacy requests. " }
-                        "Access, correct, export or delete your personal data, as described in the "
-                        a href="/privacy" { "privacy policy" } "."
-                    }
-                    li {
-                        strong { "Security reports. " }
-                        "If you find a vulnerability, email the details privately and we will work with you on a fix "
-                        "before anything is disclosed."
-                    }
-                    li { strong { "Partnerships and press. " } "Integrations, interviews and anything else." }
-                }
-                h2 { "Policies" }
-                p {
-                    "The " a href="/terms" { "terms of service" } " and " a href="/privacy" { "privacy policy" }
-                    " explain how " (SITE_NAME) " works and how we handle your data."
-                }
+                @if cfg!(feature = "auth") { p { strong { "Account help. " } "Your operator can help with sign-in, email verification and privacy requests." } }
+                @if cfg!(feature = "stripe") { p { strong { "Billing and refunds. " } "Contact your server operator about charges." } }
+                p { a href="/privacy" { "Privacy policy" } " · " a href="/terms" { "Terms of service" } }
+                h2 { "The software project" }
+                p { "For questions about the open-source software, email " (email_link()) ". Keep personal health records on your server." }
             }
         }
     }

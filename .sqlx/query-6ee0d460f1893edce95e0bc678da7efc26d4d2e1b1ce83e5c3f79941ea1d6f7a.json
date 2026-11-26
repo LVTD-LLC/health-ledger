@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO health_records (user_id, occurred_at, kind, title, value, unit, source, external_key)\n           SELECT $1, (d + time '12:00') AT TIME ZONE 'UTC', 'Measurement', 'Daily steps', n::text, 'steps',\n                  'Samsung Health', 'samsung-sdk/day/' || to_char(d, 'YYYY-MM-DD')\n           FROM unnest($2::date[], $3::bigint[]) AS days(d, n)\n           WHERE NOT EXISTS (SELECT 1 FROM health_records r WHERE r.user_id=$1 AND r.title IN ('Steps','Daily steps')\n               AND r.unit='steps' AND r.occurred_at >= d::timestamp AT TIME ZONE 'UTC'\n               AND r.occurred_at < (d+1)::timestamp AT TIME ZONE 'UTC'\n               AND (r.source <> 'Samsung Health' OR r.external_key IS DISTINCT FROM 'samsung-sdk/day/' || to_char(d, 'YYYY-MM-DD')))\n           ON CONFLICT (user_id,source,external_key) DO UPDATE SET value=EXCLUDED.value\n           WHERE health_records.value IS DISTINCT FROM EXCLUDED.value",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "DateArray",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6ee0d460f1893edce95e0bc678da7efc26d4d2e1b1ce83e5c3f79941ea1d6f7a"
+}

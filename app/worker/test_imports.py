@@ -90,3 +90,13 @@ class VendorArchiveTests(unittest.TestCase):
             archive.writestr("data/com.samsung.health.weight.20260101.csv", data)
         (row,) = parse_file("samsung.zip", out.getvalue(), "Samsung Health")
         self.assertEqual((row[0].hour, row[2], row[3]), (10, "weight", "72.2"))
+
+    def test_samsung_short_header_without_metadata_matches_zip(self):
+        csv = b"com.samsung.health.weight.start_time,com.samsung.health.weight.weight\n2026-01-01,72.2\n"
+        name = "com.samsung.health.weight.20260101.csv"
+        (row,) = parse_file(name, csv, "Samsung Health")
+        self.assertEqual(row[2:4], ("weight", "72.2"))
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as archive:
+            archive.writestr(name, b"com.samsung.health.weight,1,1\n" + csv)
+        self.assertEqual(list(parse_file("export.zip", out.getvalue(), "Samsung Health")), [row])

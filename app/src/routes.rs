@@ -66,7 +66,16 @@ pub fn router(state: SharedState) -> Router {
         .route("/assets/{*path}", get(assets::serve))
         .fallback(not_found);
     #[cfg(feature = "auth")]
+    let mobile_info = axum::body::Bytes::from(
+        serde_json::json!({"application":"health-ledger", "mobile_api":1, "site_url":state.cfg.site_url}).to_string(),
+    );
+    #[cfg(feature = "auth")]
     let router = router
+        .route(
+            "/.well-known/health-ledger",
+            get(move || async move { ([(header::CONTENT_TYPE, "application/json")], mobile_info) }),
+        )
+        .route("/health/samsung/daily-steps", post(crate::health::samsung_daily_steps))
         .route("/sign-up", get(sign_up_page).post(sign_up))
         .route("/verify-email", get(verify_email_page).post(verify_email))
         .route("/verify-email/resend", post(resend_verification))
@@ -81,6 +90,8 @@ pub fn router(state: SharedState) -> Router {
         .route("/passkeys/sign-in/options", post(crate::passkeys::sign_in_options))
         .route("/passkeys/sign-in", post(crate::passkeys::sign_in))
         .route("/dashboard", get(dashboard))
+        .route("/health/trends.json", get(crate::trends::aggregates))
+        .route("/health/timeline.json", get(crate::health::timeline_json))
         .route("/sources", get(sources))
         .route("/health/records", post(crate::health::add))
         .route("/health/medicines", post(crate::regimens::add))
@@ -221,7 +232,12 @@ fn about(state: &SharedState, user: Option<&User>) -> Markup {
 }
 
 fn contact(state: &SharedState, user: Option<&User>) -> Markup {
-    let page = Page { title: "Contact", path: "/contact", user, body: views::company::contact() };
+    let page = Page {
+        title: "Contact",
+        path: "/contact",
+        user,
+        body: views::company::contact(state.operator_email.as_deref()),
+    };
     views::layout(state, page)
 }
 
@@ -550,6 +566,7 @@ async fn auth_origin(
                 "/sign-up"
                     | "/verify-email"
                     | "/verify-email/resend"
+                    | "/health/samsung/daily-steps"
                     | "/health/renpho/connect"
                     | "/passkeys/register/options"
                     | "/passkeys/register"

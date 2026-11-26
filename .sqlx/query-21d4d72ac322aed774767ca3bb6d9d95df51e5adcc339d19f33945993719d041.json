@@ -1,0 +1,56 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT date_trunc($4, occurred_at AT TIME ZONE 'UTC')::date AS \"day!\",\n                      count(*) AS \"count!\", avg(value::numeric)::text AS \"mean!\",\n                      min(value::numeric)::text AS \"low!\", max(value::numeric)::text AS \"high!\"\n               FROM health_records\n               WHERE user_id=$1 AND title=$2 AND unit=$3\n                 AND kind IN ('Measurement','Lab','Sleep','Nutrition')\n                 AND value ~ '^[+-]?[0-9]+([.][0-9]+)?$'\n                 AND ($5::timestamptz IS NULL OR occurred_at >= $5) AND occurred_at < $6\n               GROUP BY 1 ORDER BY 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "day!",
+        "type_info": "Date",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "mean!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "low!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "high!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "21d4d72ac322aed774767ca3bb6d9d95df51e5adcc339d19f33945993719d041"
+}

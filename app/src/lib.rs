@@ -86,6 +86,7 @@ pub struct Assets;
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../migrations");
 
 pub struct AppState {
+    pub operator_email: Option<String>,
     /// Script-safe JSON-LD for public pages, prepared at startup.
     pub structured_data: std::collections::HashMap<String, maud::Markup>,
     pub cfg: Config,
@@ -264,6 +265,7 @@ pub fn build_configured(
     #[cfg(feature = "api")]
     let oauth_server = oauth_server::server(&cfg.site_url);
     let mut state = AppState {
+        operator_email: std::env::var("LEDGER_OPERATOR_EMAIL").ok().filter(|value| !value.trim().is_empty()),
         structured_data: Default::default(),
         cfg,
         #[cfg(feature = "posthog")]

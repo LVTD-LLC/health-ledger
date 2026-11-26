@@ -10,7 +10,7 @@ pub fn home() -> Markup {
     html! {
         section class="hero screen ledger-hero" {
             h1 {"Your health," br; span class="screen-title-soft" {"in one journal."}}
-            p class="lede" {"Bring your measurements, lab reports, workouts and daily notes into a single personal timeline."}
+            p class="lede" {"Keep your measurements, lab reports, workouts and daily notes together on your own server."}
             div class="cta" { @if cfg!(feature = "auth") {a class="btn btn-primary btn-lg" href="/sign-up" {"Start your journal"} a class="btn btn-lg" href="/sign-in" {"Sign in"}} @else {(contact_button())} }
         }
         section class="screen" { h2 class="screen-title" {"Remember the details."}

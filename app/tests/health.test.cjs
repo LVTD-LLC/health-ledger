@@ -104,3 +104,25 @@ test('chart pointer interaction snaps crosshair and populates tooltip safely', (
   assert.equal(tooltip.hidden, true);
   assert.equal(crosshair.getAttribute('hidden'), '');
 });
+
+test('exporter copy buttons copy the selected field and handle clipboard denial', async () => {
+  const header = { id: 'export-header', textContent: '{"Authorization":"Bearer example"}' };
+  const status = makeEl();
+  let click;
+  const button = { hidden: true, dataset: { copy: header.id }, addEventListener(_, fn) { click = fn; } };
+  const document = {
+    querySelector() { return null; },
+    querySelectorAll(sel) { return sel === 'button[data-copy]' ? [button] : []; },
+    getElementById(id) { return id === header.id ? header : status; },
+  };
+  let copied;
+  const clipboard = { async writeText(text) { copied = text; } };
+  vm.runInNewContext(source, { document, window: {}, navigator: { clipboard } });
+  assert.equal(button.hidden, false);
+  await click();
+  assert.equal(copied, header.textContent);
+  assert.equal(status.textContent, 'Header copied.');
+  clipboard.writeText = async () => { throw new Error('Denied'); };
+  await click();
+  assert.match(status.textContent, /manually/);
+});

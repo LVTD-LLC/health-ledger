@@ -12,7 +12,7 @@ default-run = "health-ledger"
 workspace = true
 
 [features]
-default = ["auth", "api", "mcp", "storage"]
+default = ["auth", "api", "mcp", "storage", "docs"]
 # Accounts: email-code sign-up, sign-in, passkeys, two-factor, settings, the dashboard
 # and the admin panel. Off means a public site with no accounts; the features below
 # that act on behalf of a user turn it on.
