@@ -25,6 +25,15 @@
             </intent-filter>
         </activity>
         <service android:name=".SamsungJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="false" />
+        <activity android:name=".ProviderReturnActivity" android:exported="true" android:excludeFromRecents="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="healthledger" android:host="provider-return" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".LedgerScreenActivity" android:exported="false" />
         <activity android:name=".EntryActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

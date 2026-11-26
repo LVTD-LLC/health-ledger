@@ -132,3 +132,13 @@ pub fn resume(headers: &HeaderMap, secure: bool) -> Option<Response> {
     let path = oauth_server::continue_path(headers)?;
     Some(([(header::SET_COOKIE, oauth_server::clear_continue_cookie(secure))], Redirect::to(&path)).into_response())
 }
+
+/// Finish native browser sign-in using the application's one-use authorization code.
+pub async fn android_login(State(state): State<SharedState>, body: Bytes) -> Result<Response, AppError> {
+    let invalid = || AppError::Status(StatusCode::UNAUTHORIZED, "Browser sign-in expired. Start again.".into());
+    let id = oauth_server::android_login(&state.pool, &state.oauth_server, &body).await?.ok_or_else(invalid)?;
+    let user = app_auth::users::find(&state.pool, id).await?.ok_or_else(invalid)?;
+    let mut response = crate::routes::start_session(&state, &user).await?;
+    response.headers_mut().insert(header::CACHE_CONTROL, "private, no-store".parse().unwrap());
+    Ok(response)
+}

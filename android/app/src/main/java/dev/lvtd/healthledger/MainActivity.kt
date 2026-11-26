@@ -13,7 +13,6 @@ import android.view.View
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import android.view.WindowInsets
-import android.webkit.*
 import android.widget.*
 import java.text.DateFormat
 import java.util.Date
@@ -36,8 +35,6 @@ class PrivacyActivity : Activity() {
 
 class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListener {
     private lateinit var ui: MobileUi
-    private lateinit var web: WebView
-    private lateinit var webPane: LinearLayout
     private lateinit var trends: TrendsScreen
     private lateinit var journal: JournalScreen
     private lateinit var pages: FrameLayout
@@ -45,17 +42,13 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
     private lateinit var nativePane: ScrollView
     private var destination = Destination.Trends
     private var syncDetail = false
-    private var webOpen = false
-    private var authFlow = false
     private var running = false
     private var pendingHours = 24
     private var archiveBinding: String? = null
     private var archiveFormat = ArchiveFormat.Samsung
-    private var pendingFile: ValueCallback<Array<Uri>>? = null
     private var backRegistered = false
     private val back = OnBackInvokedCallback {
         when {
-            webOpen -> closeWeb()
             syncDetail -> { syncDetail = false; render() }
             else -> select(Destination.Trends)
         }
@@ -73,57 +66,15 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
         }
         pages = FrameLayout(this)
         root.addView(pages, LinearLayout.LayoutParams(-1, 0, 1f))
-        journal = JournalScreen(this, ui, { openWeb("/sign-in","Sign in",true) }, {
-            if (LedgerSession.current() == null) openWeb("/sign-in","Sign in",true)
+        journal = JournalScreen(this, ui, { openScreen("/sign-in","Sign in") }, {
+            if (LedgerSession.current() == null) openScreen("/sign-in","Sign in")
             else startActivityForResult(Intent(this,EntryActivity::class.java),8)
         })
-        trends = TrendsScreen(this, ui, { openWeb("/sign-in","Sign in",true) }, { select(Destination.Sources) })
+        trends = TrendsScreen(this, ui, { openScreen("/sign-in","Sign in") }, { select(Destination.Sources) })
         pages.addView(trends.view)
         pages.addView(journal.view)
         nativePane = ScrollView(this)
         pages.addView(nativePane)
-        webPane = ui.column()
-        pages.addView(webPane)
-        val webOrigin = LedgerApp.origin
-        web = WebView(this).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.allowFileAccess = false
-            settings.allowContentAccess = false
-            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-            CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
-            webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    if (LedgerApp.origin != webOrigin) return true
-                    if (isLedgerUrl(request.url.toString(), webOrigin)) return false
-                    if (request.isForMainFrame && request.hasGesture() && request.url.scheme == "https") {
-                        runCatching { startActivity(Intent(Intent.ACTION_VIEW, request.url)) }
-                    }
-                    return true
-                }
-                override fun onPageFinished(view: WebView, url: String) {
-                    if (LedgerApp.origin != webOrigin) return
-                    updateBackNavigation()
-                    CookieManager.getInstance().flush()
-                    // An old account's consent never follows a new sign-in.
-                    val bound = syncPrefs.getString("binding", null)
-                    if (bound != null && LedgerSession.current()?.binding != bound) disconnect()
-                    if (authFlow && isLedgerUrl(url, LedgerApp.origin) && Uri.parse(url).path == "/dashboard" && LedgerSession.current() != null) {
-                        closeWeb()
-                    }
-                }
-            }
-            webChromeClient = object : WebChromeClient() {
-                override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
-                    pendingFile?.onReceiveValue(null)
-                    pendingFile = callback
-                    val pick = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
-                    startActivityForResult(pick, 4)
-                    return true
-                }
-            }
-        }
-        webPane.addView(web, LinearLayout.LayoutParams(-1,0,1f))
         ui.line(root)
         tabs = ui.column()
         root.addView(tabs)
@@ -135,37 +86,29 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
         archiveFormat = ArchiveFormat.valueOf(state?.getString("format") ?: "Samsung")
         trends.restore(state?.getString("trendMetric"), state?.getString("trendRange"), state?.getString("trendMode"))
         journal.restore(state?.getString("search").orEmpty(), state?.getInt("offset") ?: 0)
-        if (state?.getString("origin") == LedgerApp.origin && state?.getBoolean("webOpen") == true) {
-            webOpen = true
-            authFlow = state.getBoolean("authFlow")
-            webHeader(state.getString("webTitle").orEmpty())
-            if (web.restoreState(state) == null) closeWeb()
-        }
         if (LedgerApp.origin == null) {
             startActivity(Intent(this, ServerActivity::class.java))
             finish()
-        } else if (!webOpen && (LedgerSession.current() == null || (state == null && intent.getBooleanExtra("signIn", false)))) {
-            openWeb("/sign-in","Sign in",true)
+        } else if (state == null && (LedgerSession.current() == null || intent.getBooleanExtra("signIn", false))) {
+            openScreen("/sign-in","Sign in")
         } else render()
     }
 
     override fun onResume() {
         super.onResume()
         syncPrefs.registerOnSharedPreferenceChangeListener(this)
-        if (!webOpen && !isFinishing) render()
+        val bound = syncPrefs.getString("binding", null)
+        if (bound != null && bound != LedgerSession.current()?.binding) disconnect()
+        if (!isFinishing) render()
     }
     override fun onPause() {
         syncPrefs.unregisterOnSharedPreferenceChangeListener(this)
         super.onPause()
     }
     override fun onSaveInstanceState(out: Bundle) {
-        if (webOpen) web.saveState(out)
         out.putString("origin", LedgerApp.origin)
         out.putString("destination",destination.name)
         out.putBoolean("syncDetail",syncDetail)
-        out.putBoolean("webOpen",webOpen)
-        out.putBoolean("authFlow",authFlow)
-        out.putString("webTitle",webPane.tag as? String)
         out.putString("trendMetric", trends.metricId)
         out.putString("trendRange", trends.range.name)
         out.putString("trendMode", trends.mode.name)
@@ -177,19 +120,15 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
         super.onSaveInstanceState(out)
     }
     override fun onSharedPreferenceChanged(prefs: SharedPreferences?, key: String?) {
-        if (!webOpen && destination == Destination.Sources && key in listOf("message","last","binding","automatic","archiveStatus","fullHistory","hours","allApps")) render()
+        if (destination == Destination.Sources && key in listOf("message","last","binding","automatic","archiveStatus","fullHistory","hours","allApps")) render()
     }
     override fun onActivityResult(request: Int, result: Int, data: Intent?) {
         super.onActivityResult(request, result, data)
         if (request == 8 && result == RESULT_OK) journal.show(true)
         if (request == 7 && result == RESULT_OK) data?.data?.let { importArchive(it) }
-        if (request == 4) {
-            pendingFile?.onReceiveValue(if (result == RESULT_OK) data?.data?.let { arrayOf(it) } else null)
-            pendingFile = null
-        }
     }
     private fun updateBackNavigation() {
-        val needed = webOpen || destination != Destination.Trends
+        val needed = destination != Destination.Trends
         if (needed == backRegistered) return
         if (needed) onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, back)
         else onBackInvokedDispatcher.unregisterOnBackInvokedCallback(back)
@@ -199,42 +138,14 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
         if (backRegistered) onBackInvokedDispatcher.unregisterOnBackInvokedCallback(back)
         trends.close()
         journal.close()
-        pendingFile?.onReceiveValue(null)
-        webPane.removeView(web)
-        web.destroy()
         super.onDestroy()
     }
-    private fun webHeader(title: String) {
-        if (webPane.childCount > 1) webPane.removeViewAt(0)
-        webPane.tag = title
-        webPane.addView(LinearLayout(this).apply {
-            gravity = android.view.Gravity.CENTER_VERTICAL
-            addView(ui.iconButton("Back to app",R.drawable.ic_back,::closeWeb))
-            if (authFlow) {
-                addView(ui.text(LedgerApp.origin.orEmpty(),15,true), LinearLayout.LayoutParams(0,-2,1f))
-                addView(Button(this@MainActivity).apply { text = "Server"; setOnClickListener { chooseServer() } })
-            } else addView(ui.text(title,18,true))
-        },0)
-    }
-    private fun openWeb(path: String, title: String, auth: Boolean = false) {
-        authFlow = auth
-        webOpen = true
-        webHeader(title)
-        render()
-        LedgerApp.origin?.let { web.loadUrl(it + path) }
-    }
-    private fun closeWeb() {
-        webOpen = false
-        authFlow = false
-        web.stopLoading()
-        render(refreshTrends = destination == Destination.Trends)
-        if (destination == Destination.Journal) journal.show(true)
+    private fun openScreen(path: String, title: String) {
+        startActivity(Intent(this, LedgerScreenActivity::class.java).putExtra("path", path).putExtra("title", title))
     }
     private fun select(target: Destination) {
         val refreshTrends = target == Destination.Trends
-        val refresh = destination == target && !webOpen && target == Destination.Journal
-        webOpen = false
-        authFlow = false
+        val refresh = destination == target && target == Destination.Journal
         syncDetail = false
         destination = target
         nativePane.scrollTo(0,0)
@@ -243,13 +154,11 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
     }
     private fun render(refreshTrends: Boolean = false) {
         updateBackNavigation()
-        journal.view.visibility = if (!webOpen && destination == Destination.Journal) View.VISIBLE else View.GONE
-        trends.view.visibility = if (!webOpen && destination == Destination.Trends) View.VISIBLE else View.GONE
-        nativePane.visibility = if (!webOpen && (destination == Destination.Sources || destination == Destination.More)) View.VISIBLE else View.GONE
-        webPane.visibility = if (webOpen) View.VISIBLE else View.GONE
+        journal.view.visibility = if (destination == Destination.Journal) View.VISIBLE else View.GONE
+        trends.view.visibility = if (destination == Destination.Trends) View.VISIBLE else View.GONE
+        nativePane.visibility = if ((destination == Destination.Sources || destination == Destination.More)) View.VISIBLE else View.GONE
         tabs.removeAllViews()
         tabs.addView(ui.navigation(destination,::select))
-        if (webOpen) return
         if (destination == Destination.Trends) { trends.show(refreshTrends); return }
         if (destination == Destination.Journal) { journal.show(); return }
         val scroll = nativePane.scrollY
@@ -271,10 +180,10 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
         ui.row(panel,"Health Connect", if (bound) "${scopeLabel()} · ${scheduleLabel()}" else "Sync readings shared by your Android apps") {
             syncDetail = true; nativePane.scrollTo(0,0); render()
         }
-        samsungSource(this, ui, panel) { if (!webOpen && destination == Destination.Sources) render() }
+        samsungSource(this, ui, panel) { if (destination == Destination.Sources) render() }
         ui.section(panel,"File imports")
         ui.row(panel,"Import an export","Samsung Health, Fitbit, Apple Health, Strava, CSV or labs") {
-            if (session == null) openWeb("/sign-in","Sign in",true)
+            if (session == null) openScreen("/sign-in","Sign in")
             else AlertDialog.Builder(this).setTitle("Import from").setItems(ArchiveFormat.entries.map { it.title }.toTypedArray()) { _, i ->
                 archiveFormat = ArchiveFormat.entries[i]
                 archiveBinding = session.binding
@@ -282,16 +191,17 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
             }.show()
         }
         syncPrefs.getString("archiveStatus",null)?.let { ui.paragraph(panel,it) }
-        ui.row(panel,"Import history","Files and processing status") { openWeb("/sources#manual-import","Import history") }
+        ui.row(panel,"Import history","Files and processing status") { openScreen("/sources#manual-import","Import history") }
         ui.section(panel,"Cloud services")
         for ((name, anchor, description) in listOf(
+            Triple("PICOOC", "source-picooc", "Scale weight and body composition"),
             Triple("RENPHO", "source-renpho", "Scale and smart tape"),
             Triple("Intervals.icu", "source-intervals", "Wellness and training"),
             Triple("Withings", "source-withings", "Body measurements and blood pressure"),
             Triple("Hevy", "source-hevy", "Workouts and exercise sets"),
             Triple("Google Health / Fitbit", "source-google-health", "Activity, sleep and heart rate")
         )) {
-            ui.row(panel,name,description) { openWeb("/sources#$anchor:~:text=${Uri.encode(name)}", name) }
+            ui.row(panel,name,description) { openScreen("/sources#$anchor", name) }
         }
     }
     private fun chooseServer() { startActivity(Intent(this, ServerActivity::class.java)) }
@@ -299,10 +209,10 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
         panel.addView(ui.header("More"))
         ui.section(panel,"Your journal")
         for ((title, path) in listOf("Medicines" to "/dashboard#medicines","Documents" to "/dashboard#files","Reminders" to "/dashboard#reminders"))
-            ui.row(panel,title) { openWeb(path,title) }
+            ui.row(panel,title) { openScreen(path,title) }
         ui.section(panel,"Account")
         ui.row(panel,"Server address", LedgerApp.origin.orEmpty(), ::chooseServer)
-        ui.row(panel,"Account settings") { openWeb("/settings","Account settings") }
+        ui.row(panel,"Account settings") { openScreen("/settings","Account settings") }
         ui.row(panel,"Data and permissions",action=::privacy)
     }
     private fun scopeLabel() = if (syncPrefs.getBoolean("allApps",false)) "All sharing apps" else "Samsung Health"
@@ -315,7 +225,7 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
         panel.addView(ui.header("Health Connect",ui.iconButton("Back to sources",R.drawable.ic_back) { syncDetail=false; render() }))
         val session = LedgerSession.current()
         if (session == null) {
-            ui.row(panel,"Sign in","Choose the journal to sync with") { openWeb("/sign-in","Sign in",true) }
+            ui.row(panel,"Sign in","Choose the journal to sync with") { openScreen("/sign-in","Sign in") }
             return
         }
         if (syncPrefs.getString("binding",null) != session.binding) {

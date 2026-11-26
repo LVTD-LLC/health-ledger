@@ -552,7 +552,11 @@ pub async fn dashboard(state: &SharedState, user: &app_auth::User, filter: Filte
 }
 
 /// Dedicated Data sources page linked from the account profile menu.
-pub async fn sources(state: &SharedState, user: &app_auth::User) -> Result<Response, AppError> {
+pub async fn sources(
+    state: &SharedState,
+    user: &app_auth::User,
+    invalid_scale_login: Option<(&str, &str)>,
+) -> Result<Response, AppError> {
     let connection = sqlx::query_scalar!("SELECT status FROM health_connections WHERE user_id=$1", user.id)
         .fetch_optional(&state.pool)
         .await?;
@@ -570,8 +574,6 @@ pub async fn sources(state: &SharedState, user: &app_auth::User) -> Result<Respo
     .fetch_all(&state.pool)
     .await?;
 
-    let renpho = clouds.iter().find(|x| x.provider == "renpho");
-    let renpho_needs_login = renpho.is_none_or(|c| c.status.starts_with("Reconnect"));
     let cloud_ids: Vec<&str> = clouds.iter().map(|c| c.provider.as_str()).collect();
     let connected_count = connected_source_names(connection.is_some(), &cloud_ids, has_key).len();
     let imports: Vec<_> = files.iter().filter(|f| f.purpose == "import").take(12).collect();
@@ -663,44 +665,57 @@ pub async fn sources(state: &SharedState, user: &app_auth::User) -> Result<Respo
                         p class="muted small group-desc" { "Automatic background imports that pull your latest readings on a schedule." }
 
                         div class="sources-stack" {
-                            article class="card source-card" id="source-renpho" {
-                                div class="source-card-head" {
-                                    div class="source-card-title" {
-                                        span class="source-icon" aria-hidden="true" { "R" }
-                                        div {
-                                            h3 { "RENPHO scale and smart tape" }
-                                            p class="muted small" { "Body weight, composition and girth tape readings refreshed every six hours." }
+                            @for (id, monogram, title, description, hint) in [
+                                ("renpho", "R", "RENPHO scale and smart tape", "Body weight, composition and girth tape readings refreshed every six hours.", "The worker uses your password once and keeps an encrypted session for scheduled reads."),
+                                ("picooc", "P", "PICOOC smart scale", "Import weight and body composition history from your primary PICOOC profile. New readings sync every six hours.", "Your server stores your PICOOC sign-in encrypted and uses it for each sync through an unofficial client. Disconnect to remove it.")
+                            ] {
+                                @let connection = clouds.iter().find(|c| c.provider == id);
+                                @let label = provider_label(id);
+                                @let previous = invalid_scale_login.filter(|(provider, _)| *provider == id);
+                                article class="card source-card" id={ "source-" (id) } {
+                                    div class="source-card-head" {
+                                        div class="source-card-title" {
+                                            span class="source-icon" aria-hidden="true" { (monogram) }
+                                            div {
+                                                h3 { (title) }
+                                                p class="muted small" { (description) }
+                                            }
+                                        }
+                                        @if let Some(cloud) = connection {
+                                            span class=(source_status_class(&cloud.status)) {
+                                                (if cloud.status.starts_with("Reconnect") { "Reconnect needed" } else if cloud.status == "Queued" || cloud.status == "Waiting for first import" { "Queued" } else { "Connected" })
+                                            }
+                                        } @else {
+                                            span class="status-pill status-pill-muted" { "Not connected" }
                                         }
                                     }
-                                    @if let Some(cloud) = renpho {
-                                        span class=(source_status_class(&cloud.status)) {
-                                            (if cloud.status.starts_with("Reconnect") { "Reconnect needed" } else { "Connected" })
-                                        }
-                                    } @else {
-                                        span class="status-pill status-pill-muted" { "Not connected" }
-                                    }
-                                }
-                                div class="source-callout" {
-                                    p class="small" {
-                                        "Connecting through the unofficial RENPHO client signs you out of the RENPHO app. Signing back into the app can pause sync here. If your Bluetooth scale needs the phone app to upload weigh-ins, consider the Apple Health exporter below."
-                                    }
-                                }
-                                @if let Some(cloud) = renpho {
-                                    div class="source-status-bar" {
-                                        p class="small" { (cloud.status) }
-                                        form method="post" action="/health/cloud/renpho/disconnect" {
-                                            button class="btn btn-sm" type="submit" { "Disconnect RENPHO" }
+                                    @if id == "renpho" {
+                                        div class="source-callout" {
+                                            p class="small" {
+                                                "Connecting through the unofficial RENPHO client signs you out of the RENPHO app. Signing back into the app can pause sync here. If your Bluetooth scale needs the phone app to upload weigh-ins, consider the Apple Health exporter below."
+                                            }
                                         }
                                     }
-                                }
-                                @if renpho_needs_login {
-                                    form class="form source-form" method="post" action="/health/renpho/connect" {
-                                        div class="ledger-pair" {
-                                            label { "RENPHO email" input type="email" required name="email" maxlength="320" autocomplete="off" placeholder="you@example.com"; }
-                                            label { "RENPHO password" input type="password" required name="password" maxlength="1024" autocomplete="off"; }
+                                    @if let Some(cloud) = connection {
+                                        div class="source-status-bar" {
+                                            p class="small" { (cloud.status) }
+                                            form method="post" action={ "/health/cloud/" (id) "/disconnect" } {
+                                                button class="btn btn-sm" type="submit" { "Disconnect " (label) }
+                                            }
                                         }
-                                        p class="hint" { "The worker uses your password once and keeps an encrypted session for scheduled reads." }
-                                        button class="btn btn-primary" type="submit" { "Connect RENPHO" }
+                                    }
+                                    @if previous.is_some() || connection.is_none_or(|c| c.status.starts_with("Reconnect")) {
+                                        form class="form source-form" method="post" action={ "/health/" (id) "/connect" } {
+                                            @if previous.is_some() {
+                                                p role="alert" { "Enter your " (label) " email and password." }
+                                            }
+                                            div class="ledger-pair" {
+                                                label { (label) " email" input type="email" required name="email" maxlength="320" autocomplete="off" placeholder="you@example.com" value=(previous.map_or("", |(_, email)| email)); }
+                                                label { (label) " password" input type="password" required name="password" maxlength="1024" autocomplete="off"; }
+                                            }
+                                            p class="hint" { (hint) }
+                                            button class="btn btn-primary" type="submit" { "Connect " (label) }
+                                        }
                                     }
                                 }
                             }
@@ -871,7 +886,7 @@ pub async fn sources(state: &SharedState, user: &app_auth::User) -> Result<Respo
                                 p class="small muted" { "Use Direct sync above, export dated scale readings as CSV, or sync RENPHO to Apple Health and use the phone exporter." }
                             }
                             div class="card guide-card" {
-                                h3 { "PICOOC, OPPO OHealth & Eight Sleep" }
+                                h3 { "OPPO OHealth & Eight Sleep" }
                                 p class="small muted" { "Bring across measurements already synced into Apple Health, or convert a personal export into the custom CSV schema." }
                             }
                             div class="card guide-card" {
@@ -944,6 +959,7 @@ fn source_status_class(status: &str) -> &'static str {
 fn provider_label(id: &str) -> &str {
     match id {
         "renpho" => "RENPHO",
+        "picooc" => "PICOOC",
         "hevy" => "Hevy",
         "google-health" => "Google Health",
         "withings" => "Withings",

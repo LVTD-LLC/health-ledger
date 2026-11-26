@@ -17,10 +17,13 @@ pub fn consent(authorization: &Authorization, user: &User) -> Markup {
                         strong { (user.email) } "."
                     }
                 }
-                ul class="oauth-access" {
+                @if client.id == app_auth::oauth_server::ANDROID_CLIENT {
+                    p { "Sign in to the Health Ledger app running on this device. Continue only if you just started sign-in there." }
+                } @else { ul class="oauth-access" {
                     li { "It will be able to do what you can do: the API and its tools act as your account." }
                     li { "This includes reading your health entries, medication history, check-ins and extracted document text." }
                     li { "You can disconnect it at any time from " a href="/settings#connected-apps" { "Settings" } ". It also lapses after 30 days without use." }
+                }
                 }
                 @if let Some(from) = from {
                     p class="muted small" { "Registered from " a href=(client.client_uri.as_deref().unwrap_or_default()) rel="noopener noreferrer" { (from) } "." }

@@ -18,7 +18,9 @@ pub async fn security_headers(req: Request, next: Next) -> Response {
     let h = resp.headers_mut();
     h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
     h.insert("x-frame-options", HeaderValue::from_static("DENY"));
-    h.insert("referrer-policy", HeaderValue::from_static("strict-origin-when-cross-origin"));
+    if h.get("referrer-policy").is_none_or(|v| v != "no-referrer") {
+        h.insert("referrer-policy", HeaderValue::from_static("strict-origin-when-cross-origin"));
+    }
     h.insert("x-deployment-revision", HeaderValue::from_static(BUILD_REVISION));
     resp
 }

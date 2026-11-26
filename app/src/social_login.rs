@@ -165,7 +165,9 @@ pub fn routes(mut router: Router<SharedState>) -> Router<SharedState> {
         router = router
             .route(
                 &format!("/auth/{id}"),
-                post(move |state: State<SharedState>, user: MaybeUser| start(state, user, id)),
+                post(move |state: State<SharedState>, user: MaybeUser, headers: HeaderMap| {
+                    start(state, user, headers, id)
+                }),
             )
             .route(
                 &format!("/auth/{id}/callback"),
@@ -314,12 +316,13 @@ async fn begin(
     provider: &'static str,
     purpose: &str,
     account: Option<(&User, &str)>,
+    headers: &HeaderMap,
 ) -> Result<Response, AppError> {
     let Some(client) = state.social_login.get(provider) else {
         return Ok(login_notice(provider, "unavailable"));
     };
     let token = random()?;
-    let state_token = random()?;
+    let state_token = crate::routes::provider_state(headers, random()?);
     let nonce = random()?;
     let verifier = random()?;
     let state_hash = hash(&state_token);
@@ -337,12 +340,13 @@ async fn begin(
 async fn start(
     State(state): State<SharedState>,
     MaybeUser(user): MaybeUser,
+    headers: HeaderMap,
     provider: &'static str,
 ) -> Result<Response, AppError> {
     if user.is_some() {
         return Ok(Redirect::to("/dashboard").into_response());
     }
-    begin(&state, provider, "login", None).await
+    begin(&state, provider, "login", None, &headers).await
 }
 
 #[derive(Deserialize)]
@@ -380,7 +384,7 @@ async fn settings(
         return crate::settings::problem(&state, &user, StatusCode::UNPROCESSABLE_ENTITY, &message).await;
     }
     if form.action == "confirm" {
-        return begin(&state, provider, "confirm", Some((&user, token))).await;
+        return begin(&state, provider, "confirm", Some((&user, token)), &headers).await;
     }
     let authorized = if profile.passwordless {
         confirmed(&state.pool, user.id, Some(token)).await?
@@ -420,7 +424,7 @@ async fn settings(
         tx.commit().await?;
         return Ok(Redirect::to(&format!("/settings?{provider}=disconnected")).into_response());
     }
-    begin(&state, provider, "link", Some((&user, token))).await
+    begin(&state, provider, "link", Some((&user, token)), &headers).await
 }
 
 #[derive(Deserialize)]

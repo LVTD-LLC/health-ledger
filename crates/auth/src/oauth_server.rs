@@ -860,6 +860,37 @@ async fn exchange_code(
     client: &Client,
     pairs: &[(String, String)],
 ) -> Result<TokenSet, TokenError> {
+    if client.id == ANDROID_CLIENT {
+        return Err(TokenError::invalid("invalid_client", "Use the native sign-in endpoint."));
+    }
+    let (user_id, scope, resource) = consume_code(pool, server, &client.id, pairs).await?;
+    let mut tx = pool.begin().await?;
+    let tokens = issue(&mut tx, client, user_id, &scope, resource.as_deref()).await?;
+    tx.commit().await?;
+    Ok(tokens)
+}
+
+pub const ANDROID_CLIENT: &str = "health-ledger-android";
+
+/// Redeem only a native login code issued to this app after browser consent.
+pub async fn android_login(pool: &Pool, server: &Server, body: &[u8]) -> anyhow::Result<Option<Uuid>> {
+    let pairs = form_pairs(body);
+    if first(&pairs, "redirect_uri").is_none() {
+        return Ok(None);
+    }
+    match consume_code(pool, server, ANDROID_CLIENT, &pairs).await {
+        Ok((user, _, _)) => Ok(Some(user)),
+        Err(TokenError(StatusCode::INTERNAL_SERVER_ERROR, _, _)) => anyhow::bail!("Could not redeem native sign-in"),
+        Err(_) => Ok(None),
+    }
+}
+
+async fn consume_code(
+    pool: &Pool,
+    server: &Server,
+    client_id: &str,
+    pairs: &[(String, String)],
+) -> Result<(Uuid, String, Option<String>), TokenError> {
     let code = first(pairs, "code")
         .filter(|c| printable(c, 256))
         .ok_or_else(|| TokenError::invalid("invalid_request", "code is required."))?;
@@ -877,7 +908,7 @@ async fn exchange_code(
     let Some(stored) = stored else {
         return Err(TokenError::invalid("invalid_grant", "Unknown, used or expired authorization code."));
     };
-    if stored.client_id != client.id {
+    if stored.client_id != client_id {
         return Err(TokenError::invalid("invalid_grant", "This code was issued to another client."));
     }
     if stored.expires_at <= OffsetDateTime::now_utc() {
@@ -899,10 +930,7 @@ async fn exchange_code(
             return Err(TokenError::invalid("invalid_target", "resource differs from the authorization request."));
         }
     }
-    let mut tx = pool.begin().await?;
-    let tokens = issue(&mut tx, client, stored.user_id, &stored.scope, stored.resource.as_deref()).await?;
-    tx.commit().await?;
-    Ok(tokens)
+    Ok((stored.user_id, stored.scope, stored.resource))
 }
 
 async fn refresh(pool: &Pool, client: &Client, pairs: &[(String, String)]) -> Result<TokenSet, TokenError> {
@@ -1039,7 +1067,7 @@ pub async fn purge_expired(pool: &Pool) -> anyhow::Result<u64> {
             .await?
             .rows_affected();
     let clients = sqlx::query!(
-        "DELETE FROM oauth_clients c WHERE COALESCE(c.last_used_at, c.created_at) < now() - make_interval(days => $1) \
+        "DELETE FROM oauth_clients c WHERE c.id <> 'health-ledger-android' AND COALESCE(c.last_used_at, c.created_at) < now() - make_interval(days => $1) \
          AND NOT EXISTS (SELECT 1 FROM oauth_tokens t WHERE t.client_id = c.id) \
          AND NOT EXISTS (SELECT 1 FROM oauth_codes o WHERE o.client_id = c.id)",
         UNUSED_CLIENT_DAYS as i32

@@ -52,6 +52,8 @@ app/                 The product. Edit freely.
   src/assets.rs        embedded /assets/* with immutable caching
   assets/              style.css, favicon.svg, og-image.png (embedded, content-hashed URLs)
   og-image/            og.html source and render.sh for assets/og-image.png, the link-preview image
+  worker/picooc/       pinned SmartScaleConnect helper for primary-profile PICOOC scale history
+  worker/picooc_sync.py maps scheduled PICOOC readings to timeline measurements
   tests/app.rs         end-to-end tests through the router, real Postgres
 crates/core/         Config, Pool (applies the app's migrator), AppError, middleware, tracing, bounded CPU work,
                      jobs (durable Postgres queue: enqueue API, worker, operator queries),
@@ -67,6 +69,8 @@ _hosting/<host>/     optional files overlaid onto the root when that host is cho
 ```
 
 ## Self-hosted Android setup
+
+Android’s LedgerScreenActivity renders account and journal forms with native controls. ScreenClient uses the selected server origin and session. ProviderReturnActivity handles pending external consent. BrowserLogin uses the built-in OAuth client from migration 0022 for browser-assisted passkey sign-in.
 
 The operator and publisher runbook is in `app/content/docs/android-self-hosting.md`. The Android client uses the instance’s configured origin and public `/.well-known/health-ledger` descriptor. Validate that descriptor without sending credentials. The optional LEDGER_OPERATOR_EMAIL runtime setting is the contact address for the instance. Keep Samsung SDK binaries and signing keys outside the repository.
 
